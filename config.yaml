@@ -1,0 +1,154 @@
+project:
+  name: telco-customer-churn-mlops
+
+random_seed: 42
+
+data:
+  raw_filename: Telco_customer_churn.xlsx
+  raw_dir: data/raw
+  versions:
+    v1:
+      path: data/v1/telco_churn_v1.csv
+      metadata_path: data/v1/metadata.json
+    v2:
+      path: data/v2/telco_churn_v2_clean_encoded.csv
+      metadata_path: data/v2/preprocessing_metadata.json
+    v3:
+      path: data/v3/telco_churn_v3_features.csv
+      metadata_path: data/v3/feature_metadata.json
+
+schema:
+  target_column: Churn Value
+  source_columns:
+    - CustomerID
+    - Count
+    - Country
+    - State
+    - City
+    - Zip Code
+    - Lat Long
+    - Latitude
+    - Longitude
+    - Gender
+    - Senior Citizen
+    - Partner
+    - Dependents
+    - Tenure Months
+    - Phone Service
+    - Multiple Lines
+    - Internet Service
+    - Online Security
+    - Online Backup
+    - Device Protection
+    - Tech Support
+    - Streaming TV
+    - Streaming Movies
+    - Contract
+    - Paperless Billing
+    - Payment Method
+    - Monthly Charges
+    - Total Charges
+    - Churn Label
+    - Churn Value
+    - Churn Score
+    - CLTV
+    - Churn Reason
+  numeric_columns:
+    - Latitude
+    - Longitude
+    - Tenure Months
+    - Monthly Charges
+    - Total Charges
+  drop_columns:
+    - CustomerID
+    - Count
+    - Country
+    - State
+    - City
+    - Zip Code
+    - Lat Long
+    - Churn Label
+    - Churn Score
+    - CLTV
+    - Churn Reason
+
+feature_engineering:
+  service_columns:
+    - Phone Service
+    - Multiple Lines
+    - Online Security
+    - Online Backup
+    - Device Protection
+    - Tech Support
+    - Streaming TV
+    - Streaming Movies
+  protection_columns:
+    - Online Security
+    - Online Backup
+    - Device Protection
+    - Tech Support
+  streaming_columns:
+    - Streaming TV
+    - Streaming Movies
+  contract_length_months:
+    Month-to-month: 1
+    One year: 12
+    Two year: 24
+
+training:
+  test_size: 0.20
+  validation_size: 0.20
+  random_seed: 42
+  cv_splits: 5
+  scoring: roc_auc
+  n_jobs: -1
+  dataset_version: v3
+
+models:
+  logistic_regression:
+    enabled: true
+    param_grid:
+      classifier__C: [0.1, 1.0, 10.0]
+      classifier__solver: [liblinear]
+      classifier__penalty: [l2]
+  random_forest:
+    enabled: true
+    param_grid:
+      classifier__n_estimators: [200, 400]
+      classifier__max_depth: [null, 8, 16]
+      classifier__min_samples_split: [2, 10]
+      classifier__min_samples_leaf: [1, 3]
+  xgboost:
+    enabled: true
+    use_scale_pos_weight: true
+    param_grid:
+      classifier__n_estimators: [200, 400]
+      classifier__max_depth: [3, 5]
+      classifier__learning_rate: [0.03, 0.1]
+      classifier__subsample: [0.8, 1.0]
+      classifier__colsample_bytree: [0.8, 1.0]
+  catboost:
+    enabled: true
+    param_grid:
+      classifier__iterations: [200, 400]
+      classifier__depth: [4, 6]
+      classifier__learning_rate: [0.03, 0.1]
+
+mlflow:
+  tracking_uri: mlruns
+  experiment_name: telco-customer-churn
+  registered_model_name: TelcoCustomerChurnBestModel
+
+artifacts:
+  dir: artifacts
+  comparison_table: artifacts/model_comparison.csv
+  best_model_summary: artifacts/best_model_summary.json
+  preprocessing_metadata: artifacts/preprocessing_metadata.json
+  feature_columns: artifacts/feature_columns.json
+  confusion_matrix_dir: artifacts/confusion_matrices
+  feature_importance_dir: artifacts/feature_importance
+
+deployment:
+  model_uri: models/best_model
+  api_host: 0.0.0.0
+  api_port: 8000
