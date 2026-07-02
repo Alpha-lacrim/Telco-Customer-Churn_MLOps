@@ -91,9 +91,9 @@ This single command:
 - trains Logistic Regression, Random Forest, XGBoost, and CatBoost
 - runs stratified K-fold `GridSearchCV`
 - evaluates accuracy, precision, recall, F1, ROC AUC, and confusion matrices
-- tunes the classification decision threshold on the validation set for stronger accuracy
+- tunes the classification decision threshold on the validation set for the configured objective
 - logs runs, metrics, parameters, artifacts, and models to MLflow
-- registers the best model by validation ROC AUC
+- registers the best model by the configured validation selection metric
 - saves a deployable MLflow model under `models/best_model`
 
 Useful outputs:
@@ -166,7 +166,7 @@ Example response:
   "predictions": [
     {
       "predicted_class": 1,
-      "decision_threshold": 0.71,
+      "decision_threshold": 0.55,
       "probability_stayed": 0.23,
       "probability_churned": 0.77
     }
@@ -178,7 +178,7 @@ Example response:
 
 All project constants live in `config.yaml`, including paths, random seed, split sizes, MLflow settings, model hyperparameter grids, and feature engineering rules.
 
-The pipeline keeps ROC AUC as the model-selection metric, then tunes each model's probability threshold on the validation split using the configured `training.decision_threshold_metric`. This improves class predictions and API output without using the test set for threshold selection.
+The pipeline can select the best model with `training.model_selection_metric`. The current configuration uses `overall_score`, a weighted validation metric that combines ROC AUC, balanced accuracy, F1, accuracy, and recall. Each model's probability threshold is tuned on the validation split using `training.decision_threshold_metric`, so API class predictions use the same threshold chosen during training without using the test set for model selection.
 
 ## Suggested Commit History
 

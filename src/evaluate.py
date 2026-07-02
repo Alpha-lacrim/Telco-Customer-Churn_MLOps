@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import (
     accuracy_score,
+    balanced_accuracy_score,
     confusion_matrix,
     f1_score,
     precision_score,
@@ -21,6 +22,15 @@ from src.config import resolve_path
 from src.utils import safe_name, save_dataframe
 
 LOGGER = logging.getLogger(__name__)
+
+
+DEFAULT_OVERALL_SCORE_WEIGHTS = {
+    "roc_auc": 0.30,
+    "balanced_accuracy": 0.25,
+    "f1": 0.25,
+    "accuracy": 0.10,
+    "recall": 0.10,
+}
 
 
 def predict_positive_class_scores(estimator: Any, features: pd.DataFrame) -> np.ndarray:
@@ -42,6 +52,43 @@ def predict_classes_from_scores(
     return (positive_scores >= decision_threshold).astype(int)
 
 
+def compute_overall_score(
+    metrics: dict[str, float],
+    weights: dict[str, float] | None = None,
+) -> float:
+    """Combine normalized classification metrics into one balanced objective."""
+    metric_weights = weights or DEFAULT_OVERALL_SCORE_WEIGHTS
+    weight_sum = sum(float(weight) for weight in metric_weights.values())
+    if weight_sum <= 0:
+        raise ValueError("Overall score weights must sum to a positive value.")
+
+    score = 0.0
+    for metric_name, weight in metric_weights.items():
+        if metric_name not in metrics:
+            raise ValueError(f"Metric '{metric_name}' is not available for overall scoring.")
+        score += float(weight) * float(metrics[metric_name])
+    return score / weight_sum
+
+
+def _metrics_from_predictions(
+    target: pd.Series,
+    predictions: np.ndarray,
+    positive_scores: np.ndarray,
+    overall_score_weights: dict[str, float] | None = None,
+) -> dict[str, float]:
+    """Compute scalar metrics from predictions and positive-class scores."""
+    metrics = {
+        "accuracy": float(accuracy_score(target, predictions)),
+        "balanced_accuracy": float(balanced_accuracy_score(target, predictions)),
+        "precision": float(precision_score(target, predictions, zero_division=0)),
+        "recall": float(recall_score(target, predictions, zero_division=0)),
+        "f1": float(f1_score(target, predictions, zero_division=0)),
+        "roc_auc": float(roc_auc_score(target, positive_scores)),
+    }
+    metrics["overall_score"] = compute_overall_score(metrics, overall_score_weights)
+    return metrics
+
+
 def optimize_decision_threshold(
     positive_scores: np.ndarray,
     target: pd.Series,
@@ -49,6 +96,7 @@ def optimize_decision_threshold(
     minimum: float = 0.05,
     maximum: float = 0.95,
     step: float = 0.005,
+    overall_score_weights: dict[str, float] | None = None,
 ) -> tuple[float, float]:
     """Choose a decision threshold on validation data without using the test set."""
     if step <= 0:
@@ -61,15 +109,17 @@ def optimize_decision_threshold(
 
     for threshold in thresholds:
         predictions = predict_classes_from_scores(positive_scores, float(threshold))
-        if metric == "accuracy":
-            score = accuracy_score(target, predictions)
-            tie_breaker = f1_score(target, predictions, zero_division=0)
-        elif metric == "f1":
-            score = f1_score(target, predictions, zero_division=0)
-            tie_breaker = accuracy_score(target, predictions)
-        else:
+        metrics = _metrics_from_predictions(
+            target,
+            predictions,
+            positive_scores,
+            overall_score_weights,
+        )
+        if metric not in metrics:
             raise ValueError(f"Unsupported threshold optimization metric: {metric}")
 
+        score = metrics[metric]
+        tie_breaker = metrics["f1"] if metric != "f1" else metrics["balanced_accuracy"]
         candidate = (float(score), float(tie_breaker), -abs(float(threshold) - 0.5))
         if candidate > best_candidate:
             best_threshold = float(threshold)
@@ -84,20 +134,20 @@ def compute_classification_metrics(
     features: pd.DataFrame,
     target: pd.Series,
     decision_threshold: float = 0.5,
+    overall_score_weights: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Compute classification metrics for a fitted estimator."""
     positive_scores = predict_positive_class_scores(estimator, features)
     predictions = predict_classes_from_scores(positive_scores, decision_threshold)
     matrix = confusion_matrix(target, predictions, labels=[0, 1])
 
-    metrics = {
-        "accuracy": float(accuracy_score(target, predictions)),
-        "precision": float(precision_score(target, predictions, zero_division=0)),
-        "recall": float(recall_score(target, predictions, zero_division=0)),
-        "f1": float(f1_score(target, predictions, zero_division=0)),
-        "roc_auc": float(roc_auc_score(target, positive_scores)),
-        "confusion_matrix": matrix.tolist(),
-    }
+    metrics = _metrics_from_predictions(
+        target,
+        predictions,
+        positive_scores,
+        overall_score_weights,
+    )
+    metrics["confusion_matrix"] = matrix.tolist()
     return metrics
 
 
