@@ -30,6 +30,7 @@ def _runtime_resources() -> dict[str, Any]:
     config = load_config(config_path)
     metadata = read_json(config["artifacts"]["preprocessing_metadata"])
     feature_columns = read_json(config["artifacts"]["feature_columns"])
+    best_model_summary = read_json(config["artifacts"]["best_model_summary"])
     model_uri = os.getenv("MODEL_URI", config["deployment"]["model_uri"])
     if "://" not in model_uri and not model_uri.startswith("runs:"):
         model_uri = str(resolve_path(model_uri))
@@ -42,6 +43,7 @@ def _runtime_resources() -> dict[str, Any]:
         "feature_columns": feature_columns,
         "model": model,
         "model_uri": model_uri,
+        "decision_threshold": float(best_model_summary.get("decision_threshold", 0.5)),
     }
 
 
@@ -86,13 +88,15 @@ def predict(payload: Any = Body(...)) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail="Loaded model does not expose predict_proba.")
 
     probabilities = np.asarray(model.predict_proba(features))
-    predicted_classes = np.asarray(model.predict(features)).astype(int)
+    decision_threshold = resources["decision_threshold"]
+    predicted_classes = (probabilities[:, 1] >= decision_threshold).astype(int)
 
     predictions = []
     for index, predicted_class in enumerate(predicted_classes):
         predictions.append(
             {
                 "predicted_class": int(predicted_class),
+                "decision_threshold": float(decision_threshold),
                 "probability_stayed": float(probabilities[index, 0]),
                 "probability_churned": float(probabilities[index, 1]),
             }

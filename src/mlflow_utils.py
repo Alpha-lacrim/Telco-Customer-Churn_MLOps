@@ -53,7 +53,13 @@ def _log_single_result(
         mlflow_module.log_param("model_name", result.model_name)
         mlflow_module.log_param("random_seed", config["training"]["random_seed"])
         mlflow_module.log_param("cv_splits", config["training"]["cv_splits"])
+        mlflow_module.log_param("decision_threshold", result.decision_threshold)
+        mlflow_module.log_param("threshold_metric", result.threshold_metric)
         mlflow_module.log_metric("cv_best_roc_auc", result.cv_best_score)
+        mlflow_module.log_metric(
+            f"threshold_{result.threshold_metric}",
+            result.threshold_metric_score,
+        )
         mlflow_module.log_metric("execution_time_seconds", result.execution_time_seconds)
 
         _log_params_safely(mlflow_module, result.best_params)

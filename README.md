@@ -91,6 +91,7 @@ This single command:
 - trains Logistic Regression, Random Forest, XGBoost, and CatBoost
 - runs stratified K-fold `GridSearchCV`
 - evaluates accuracy, precision, recall, F1, ROC AUC, and confusion matrices
+- tunes the classification decision threshold on the validation set for stronger accuracy
 - logs runs, metrics, parameters, artifacts, and models to MLflow
 - registers the best model by validation ROC AUC
 - saves a deployable MLflow model under `models/best_model`
@@ -165,6 +166,7 @@ Example response:
   "predictions": [
     {
       "predicted_class": 1,
+      "decision_threshold": 0.71,
       "probability_stayed": 0.23,
       "probability_churned": 0.77
     }
@@ -175,6 +177,8 @@ Example response:
 ## Configuration
 
 All project constants live in `config.yaml`, including paths, random seed, split sizes, MLflow settings, model hyperparameter grids, and feature engineering rules.
+
+The pipeline keeps ROC AUC as the model-selection metric, then tunes each model's probability threshold on the validation split using the configured `training.decision_threshold_metric`. This improves class predictions and API output without using the test set for threshold selection.
 
 ## Suggested Commit History
 

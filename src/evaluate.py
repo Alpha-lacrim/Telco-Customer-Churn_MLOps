@@ -34,14 +34,60 @@ def predict_positive_class_scores(estimator: Any, features: pd.DataFrame) -> np.
     return estimator.predict(features)
 
 
+def predict_classes_from_scores(
+    positive_scores: np.ndarray,
+    decision_threshold: float,
+) -> np.ndarray:
+    """Convert positive-class scores into class predictions."""
+    return (positive_scores >= decision_threshold).astype(int)
+
+
+def optimize_decision_threshold(
+    positive_scores: np.ndarray,
+    target: pd.Series,
+    metric: str = "accuracy",
+    minimum: float = 0.05,
+    maximum: float = 0.95,
+    step: float = 0.005,
+) -> tuple[float, float]:
+    """Choose a decision threshold on validation data without using the test set."""
+    if step <= 0:
+        raise ValueError("Threshold search step must be positive.")
+
+    thresholds = np.arange(minimum, maximum + step / 2, step)
+    best_threshold = 0.5
+    best_score = -np.inf
+    best_candidate = (-np.inf, -np.inf, -np.inf)
+
+    for threshold in thresholds:
+        predictions = predict_classes_from_scores(positive_scores, float(threshold))
+        if metric == "accuracy":
+            score = accuracy_score(target, predictions)
+            tie_breaker = f1_score(target, predictions, zero_division=0)
+        elif metric == "f1":
+            score = f1_score(target, predictions, zero_division=0)
+            tie_breaker = accuracy_score(target, predictions)
+        else:
+            raise ValueError(f"Unsupported threshold optimization metric: {metric}")
+
+        candidate = (float(score), float(tie_breaker), -abs(float(threshold) - 0.5))
+        if candidate > best_candidate:
+            best_threshold = float(threshold)
+            best_score = float(score)
+            best_candidate = candidate
+
+    return best_threshold, best_score
+
+
 def compute_classification_metrics(
     estimator: Any,
     features: pd.DataFrame,
     target: pd.Series,
+    decision_threshold: float = 0.5,
 ) -> dict[str, Any]:
     """Compute classification metrics for a fitted estimator."""
-    predictions = estimator.predict(features)
     positive_scores = predict_positive_class_scores(estimator, features)
+    predictions = predict_classes_from_scores(positive_scores, decision_threshold)
     matrix = confusion_matrix(target, predictions, labels=[0, 1])
 
     metrics = {

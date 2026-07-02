@@ -21,6 +21,8 @@ from sklearn.preprocessing import StandardScaler
 from src.config import resolve_path
 from src.evaluate import (
     compute_classification_metrics,
+    optimize_decision_threshold,
+    predict_positive_class_scores,
     save_confusion_matrix_artifact,
     save_feature_importance_artifact,
 )
@@ -46,6 +48,9 @@ class ModelResult:
     estimator: Pipeline
     best_params: dict[str, Any]
     cv_best_score: float
+    decision_threshold: float
+    threshold_metric: str
+    threshold_metric_score: float
     validation_metrics: dict[str, Any]
     test_metrics: dict[str, Any]
     execution_time_seconds: float
@@ -240,12 +245,29 @@ def _train_single_model(
     search.fit(x_train, y_train)
 
     best_estimator = search.best_estimator_
+    threshold_config = config["training"]["decision_threshold_search"]
+    threshold_metric = config["training"]["decision_threshold_metric"]
+    validation_scores = predict_positive_class_scores(best_estimator, x_validation)
+    decision_threshold, threshold_metric_score = optimize_decision_threshold(
+        positive_scores=validation_scores,
+        target=y_validation,
+        metric=threshold_metric,
+        minimum=float(threshold_config["min"]),
+        maximum=float(threshold_config["max"]),
+        step=float(threshold_config["step"]),
+    )
     validation_metrics = compute_classification_metrics(
         best_estimator,
         x_validation,
         y_validation,
+        decision_threshold=decision_threshold,
     )
-    test_metrics = compute_classification_metrics(best_estimator, x_test, y_test)
+    test_metrics = compute_classification_metrics(
+        best_estimator,
+        x_test,
+        y_test,
+        decision_threshold=decision_threshold,
+    )
 
     execution_time = time.perf_counter() - start_time
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -278,6 +300,9 @@ def _train_single_model(
         estimator=best_estimator,
         best_params=dict(search.best_params_),
         cv_best_score=float(search.best_score_),
+        decision_threshold=decision_threshold,
+        threshold_metric=threshold_metric,
+        threshold_metric_score=threshold_metric_score,
         validation_metrics=validation_metrics,
         test_metrics=test_metrics,
         execution_time_seconds=float(execution_time),
@@ -293,6 +318,9 @@ def _comparison_table(results: list[ModelResult]) -> pd.DataFrame:
         row: dict[str, Any] = {
             "model_name": result.model_name,
             "cv_best_roc_auc": result.cv_best_score,
+            "decision_threshold": result.decision_threshold,
+            "threshold_metric": result.threshold_metric,
+            "threshold_metric_score": result.threshold_metric_score,
             "execution_time_seconds": result.execution_time_seconds,
         }
         for metric_name, metric_value in result.validation_metrics.items():
@@ -357,8 +385,13 @@ def train_models(config: dict[str, Any]) -> tuple[list[ModelResult], ModelResult
     summary = {
         "best_model": best_result.model_name,
         "selection_metric": "validation_roc_auc",
+        "decision_threshold": best_result.decision_threshold,
+        "threshold_metric": best_result.threshold_metric,
+        "threshold_metric_score": best_result.threshold_metric_score,
         "validation_roc_auc": best_result.validation_metrics["roc_auc"],
+        "validation_accuracy": best_result.validation_metrics["accuracy"],
         "test_roc_auc": best_result.test_metrics["roc_auc"],
+        "test_accuracy": best_result.test_metrics["accuracy"],
         "dataset_version": dataset_version,
         "comparison_table": str(resolve_path(config["artifacts"]["comparison_table"])),
     }
