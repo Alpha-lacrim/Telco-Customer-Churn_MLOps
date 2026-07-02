@@ -19,7 +19,10 @@ def _resolve_tracking_uri(config: dict[str, Any]) -> str:
     """Resolve local tracking paths into MLflow-compatible file URIs."""
     configured_uri = os.getenv("MLFLOW_TRACKING_URI", config["mlflow"]["tracking_uri"])
     if "://" in configured_uri or configured_uri.startswith("databricks"):
+        if configured_uri.startswith("file://"):
+            os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
         return configured_uri
+    os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
     return resolve_path(configured_uri).as_uri()
 
 
@@ -79,7 +82,11 @@ def _log_single_result(
             },
         )
 
-        mlflow_module.sklearn.log_model(result.estimator, artifact_path="model")
+        mlflow_module.sklearn.log_model(
+            result.estimator,
+            artifact_path="model",
+            serialization_format=mlflow_module.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
+        )
         LOGGER.info("Logged %s to MLflow run %s.", result.model_name, run.info.run_id)
         return run.info.run_id
 
@@ -124,7 +131,11 @@ def _save_local_mlflow_model(
     if model_path.exists():
         shutil.rmtree(model_path)
     model_path.parent.mkdir(parents=True, exist_ok=True)
-    mlflow_module.sklearn.save_model(best_result.estimator, path=str(model_path))
+    mlflow_module.sklearn.save_model(
+        best_result.estimator,
+        path=str(model_path),
+        serialization_format=mlflow_module.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
+    )
     LOGGER.info("Saved best model for deployment to %s.", model_path)
     return model_path
 
