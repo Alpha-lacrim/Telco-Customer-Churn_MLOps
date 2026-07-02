@@ -180,18 +180,4 @@ All project constants live in `config.yaml`, including paths, random seed, split
 
 The pipeline can select the best model with `training.model_selection_metric`. The current configuration uses `overall_score`, a weighted validation metric that combines ROC AUC, balanced accuracy, F1, accuracy, and recall. Each model's probability threshold is tuned on the validation split using `training.decision_threshold_metric`, so API class predictions use the same threshold chosen during training without using the test set for model selection.
 
-## Suggested Commit History
-
-If this project is submitted through Git, a clean commit sequence would be:
-
-1. Initial project structure
-2. Add dataset versioning and preprocessing
-3. Add feature engineering
-4. Add model training and evaluation
-5. Integrate MLflow tracking and registry
-6. Add FastAPI and Docker deployment
-7. Update documentation
-
-## Notes on Leakage Prevention
-
-The saved v2 and v3 datasets make the assignment data-versioning steps explicit. The training path still uses stratified splits and sklearn pipelines so scaling is fitted only inside cross-validation folds and final train fits. The best model is selected by validation ROC AUC; test metrics are reported after selection.
+The best model is selected by validation ROC AUC; test metrics are reported after selection.
