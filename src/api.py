@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -21,6 +22,33 @@ LOGGER = logging.getLogger(__name__)
 app = FastAPI(title="Telco Customer Churn API", version="1.0.0")
 
 
+def _decision_threshold(config: dict[str, Any]) -> float:
+    """Load threshold from env first, then optional training summary."""
+    threshold_override = os.getenv("DECISION_THRESHOLD")
+    if threshold_override is not None:
+        return float(threshold_override)
+
+    summary_path = resolve_path(config["artifacts"]["best_model_summary"])
+    if summary_path.exists():
+        return float(read_json(summary_path).get("decision_threshold", 0.5))
+    return 0.5
+
+
+def _resolved_model_uri(model_uri: str) -> str:
+    """Resolve local model paths while preserving MLflow registry/run URIs."""
+    if "://" in model_uri or model_uri.startswith(("runs:", "models:")):
+        return model_uri
+
+    resolved_path = resolve_path(model_uri)
+    if not Path(resolved_path).exists():
+        raise RuntimeError(
+            "MLflow model was not found at "
+            f"{resolved_path}. Run the training pipeline and mount/export the model, "
+            "or set MODEL_URI to an MLflow model registry/run URI."
+        )
+    return str(resolved_path)
+
+
 @lru_cache(maxsize=1)
 def _runtime_resources() -> dict[str, Any]:
     """Load config, threshold metadata, and MLflow model once per process."""
@@ -28,10 +56,9 @@ def _runtime_resources() -> dict[str, Any]:
 
     config_path = os.getenv("CONFIG_PATH", "config.yaml")
     config = load_config(config_path)
-    best_model_summary = read_json(config["artifacts"]["best_model_summary"])
     model_uri = os.getenv("MODEL_URI", config["deployment"]["model_uri"])
-    if "://" not in model_uri and not model_uri.startswith("runs:"):
-        model_uri = str(resolve_path(model_uri))
+    model_uri = _resolved_model_uri(model_uri)
+    decision_threshold = _decision_threshold(config)
 
     model = mlflow.sklearn.load_model(model_uri)
     LOGGER.info("Loaded MLflow model from %s.", model_uri)
@@ -39,7 +66,7 @@ def _runtime_resources() -> dict[str, Any]:
         "config": config,
         "model": model,
         "model_uri": model_uri,
-        "decision_threshold": float(best_model_summary.get("decision_threshold", 0.5)),
+        "decision_threshold": decision_threshold,
     }
 
 

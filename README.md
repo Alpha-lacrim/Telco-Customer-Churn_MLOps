@@ -108,19 +108,49 @@ Useful outputs:
 
 ## Docker Deployment
 
-Run the pipeline first so `models/best_model` exists, then build the API image:
+The Docker image is reproducible from a fresh GitHub clone. It copies only source
+code and configuration; generated training outputs such as `models/`, `mlruns/`,
+and `artifacts/` are intentionally excluded from the image context.
 
 ```bash
 docker build -t telco-churn-api .
 ```
 
-Run the container:
+To serve a locally trained model, run the pipeline first, then mount the exported
+MLflow model into the container:
 
 ```bash
-docker run --rm -p 8000:8000 telco-churn-api
+python run_pipeline.py
+docker run --rm -p 8000:8000 \
+  -v "${PWD}/models/best_model:/app/models/best_model:ro" \
+  -e DECISION_THRESHOLD=0.5 \
+  telco-churn-api
 ```
 
-The prediction service is available at `http://127.0.0.1:8000`.
+On Windows PowerShell, use:
+
+```powershell
+python run_pipeline.py
+docker run --rm -p 8000:8000 `
+  -v "${PWD}\models\best_model:/app/models/best_model:ro" `
+  -e DECISION_THRESHOLD=0.5 `
+  telco-churn-api
+```
+
+To load from an MLflow registry or run URI instead of a mounted local model:
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e MLFLOW_TRACKING_URI=http://host.docker.internal:5000 \
+  -e MODEL_URI=models:/TelcoCustomerChurnBestModel@champion \
+  -e DECISION_THRESHOLD=0.5 \
+  telco-churn-api
+```
+
+The prediction service is available at `http://127.0.0.1:8000`. If
+`DECISION_THRESHOLD` is not set, the API reads it from
+`artifacts/best_model_summary.json` when that file is mounted or present, and
+falls back to `0.5` otherwise.
 
 ## Prediction API
 

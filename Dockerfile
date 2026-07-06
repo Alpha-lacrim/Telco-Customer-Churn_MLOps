@@ -12,9 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY config.yaml run_pipeline.py ./
 COPY src ./src
-COPY artifacts ./artifacts
-COPY models ./models
-COPY mlruns ./mlruns
+
+RUN mkdir -p /app/artifacts /app/models /app/mlruns
 
 EXPOSE 8000
 
