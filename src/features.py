@@ -32,7 +32,11 @@ def _yes_indicator(dataframe: pd.DataFrame, column: str) -> pd.Series:
     return dataframe[column].astype(str).str.strip().str.lower().eq("yes").astype(int)
 
 
-def add_domain_features(dataframe: pd.DataFrame, config: dict[str, Any]) -> pd.DataFrame:
+def add_domain_features(
+    dataframe: pd.DataFrame,
+    config: dict[str, Any],
+    log_progress: bool = True,
+) -> pd.DataFrame:
     """Add realistic churn-oriented domain features."""
     df = dataframe.copy()
     target_column = config["schema"]["target_column"]
@@ -91,7 +95,8 @@ def add_domain_features(dataframe: pd.DataFrame, config: dict[str, Any]) -> pd.D
     if target is not None:
         df[target_column] = target.astype(int)
 
-    LOGGER.info("Added domain features. Output shape: %s.", df.shape)
+    if log_progress:
+        LOGGER.info("Added domain features. Output shape: %s.", df.shape)
     return df
 
 

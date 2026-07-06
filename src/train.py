@@ -10,13 +10,13 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GridSearchCV, StratifiedKFold, train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
 
 from src.config import resolve_path
 from src.evaluate import (
@@ -26,6 +26,8 @@ from src.evaluate import (
     save_confusion_matrix_artifact,
     save_feature_importance_artifact,
 )
+from src.features import add_domain_features
+from src.preprocessing import clean_raw_dataframe
 from src.utils import load_dataframe, save_dataframe, write_json
 
 LOGGER = logging.getLogger(__name__)
@@ -59,18 +61,73 @@ class ModelResult:
     run_id: str | None = None
 
 
-def _build_preprocessor(features: pd.DataFrame) -> ColumnTransformer:
-    """Build a leakage-safe preprocessing step for already encoded features."""
-    binary_columns = [
-        column for column in features.columns if features[column].dropna().nunique() <= 2
+class CleanFeatureEngineer(BaseEstimator, TransformerMixin):
+    """Fit cleaning metadata and domain features inside the sklearn pipeline."""
+
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.config = config
+
+    def fit(self, features: pd.DataFrame, target: pd.Series | None = None) -> "CleanFeatureEngineer":
+        """Fit split-local imputation metadata."""
+        _, metadata = clean_raw_dataframe(
+            pd.DataFrame(features).copy(),
+            config=self.config,
+            fit_metadata=True,
+            include_target=False,
+            log_progress=False,
+        )
+        self.metadata_ = metadata
+        return self
+
+    def transform(self, features: pd.DataFrame) -> pd.DataFrame:
+        """Clean and engineer features using fitted metadata."""
+        if not hasattr(self, "metadata_"):
+            raise ValueError("CleanFeatureEngineer must be fitted before transform.")
+
+        cleaned_features, _ = clean_raw_dataframe(
+            pd.DataFrame(features).copy(),
+            config=self.config,
+            metadata=self.metadata_,
+            fit_metadata=False,
+            include_target=False,
+            log_progress=False,
+        )
+        return add_domain_features(
+            cleaned_features,
+            self.config,
+            log_progress=False,
+        )
+
+
+def _to_float_array(features: Any) -> np.ndarray:
+    """Convert mixed transformer output to a plain numeric array for estimators."""
+    return np.asarray(features, dtype=np.float64)
+
+
+def _build_preprocessor(features: pd.DataFrame, config: dict[str, Any]) -> ColumnTransformer:
+    """Build preprocessing for the engineered feature space."""
+    feature_engineer = CleanFeatureEngineer(config)
+    engineered_sample = feature_engineer.fit(features).transform(features)
+    numeric_columns = [
+        column
+        for column in engineered_sample.columns
+        if pd.api.types.is_numeric_dtype(engineered_sample[column])
     ]
-    continuous_columns = [column for column in features.columns if column not in binary_columns]
+    categorical_columns = [
+        column for column in engineered_sample.columns if column not in numeric_columns
+    ]
 
     transformers: list[tuple[str, Any, list[str]]] = []
-    if continuous_columns:
-        transformers.append(("scaler", StandardScaler(), continuous_columns))
-    if binary_columns:
-        transformers.append(("binary", "passthrough", binary_columns))
+    if numeric_columns:
+        transformers.append(("numeric", StandardScaler(), numeric_columns))
+    if categorical_columns:
+        transformers.append(
+            (
+                "categorical",
+                OneHotEncoder(handle_unknown="ignore", sparse_output=False),
+                categorical_columns,
+            )
+        )
 
     return ColumnTransformer(
         transformers=transformers,
@@ -79,11 +136,17 @@ def _build_preprocessor(features: pd.DataFrame) -> ColumnTransformer:
     )
 
 
-def _make_pipeline(estimator: BaseEstimator, features: pd.DataFrame) -> Pipeline:
+def _make_pipeline(
+    estimator: BaseEstimator,
+    features: pd.DataFrame,
+    config: dict[str, Any],
+) -> Pipeline:
     """Combine preprocessing and estimator into a sklearn pipeline."""
     return Pipeline(
         steps=[
-            ("preprocessor", _build_preprocessor(features)),
+            ("features", CleanFeatureEngineer(config)),
+            ("preprocessor", _build_preprocessor(features, config)),
+            ("to_float", FunctionTransformer(_to_float_array, validate=False)),
             ("classifier", estimator),
         ]
     )
@@ -243,6 +306,60 @@ def _split_dataset(
     return x_train, x_validation, x_test, y_train, y_validation, y_test
 
 
+def _prepare_leakage_safe_modeling_data(
+    dataset: pd.DataFrame,
+    config: dict[str, Any],
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.Series,
+    pd.Series,
+    pd.Series,
+    dict[str, Any],
+    list[str],
+]:
+    """Split raw data first and leave learned preprocessing inside sklearn pipelines."""
+    target_column = config["schema"]["target_column"]
+    target = dataset[target_column].astype(int)
+    raw_features = dataset.drop(columns=[target_column])
+
+    x_train_raw, x_validation_raw, x_test_raw, y_train_raw, y_validation_raw, y_test_raw = (
+        _split_dataset(raw_features, target, config)
+    )
+
+    feature_columns = list(x_train_raw.columns)
+    preprocessing_metadata = {
+        "fit_scope": "inside_sklearn_pipeline_cv_folds",
+        "raw_feature_columns": feature_columns,
+        "target_column": target_column,
+        "dropped_columns": config["schema"]["drop_columns"],
+        "training_rows": int(x_train_raw.shape[0]),
+        "validation_rows": int(x_validation_raw.shape[0]),
+        "test_rows": int(x_test_raw.shape[0]),
+    }
+
+    write_json(config["artifacts"]["preprocessing_metadata"], preprocessing_metadata)
+    write_json(config["artifacts"]["feature_columns"], feature_columns)
+    LOGGER.info(
+        "Prepared leakage-safe raw modeling splits: "
+        "train=%s, validation=%s, test=%s.",
+        x_train_raw.shape,
+        x_validation_raw.shape,
+        x_test_raw.shape,
+    )
+    return (
+        x_train_raw,
+        x_validation_raw,
+        x_test_raw,
+        y_train_raw,
+        y_validation_raw,
+        y_test_raw,
+        preprocessing_metadata,
+        feature_columns,
+    )
+
+
 def _train_single_model(
     spec: ModelSpec,
     x_train: pd.DataFrame,
@@ -262,7 +379,7 @@ def _train_single_model(
         shuffle=True,
         random_state=random_seed,
     )
-    pipeline = _make_pipeline(spec.estimator, x_train)
+    pipeline = _make_pipeline(spec.estimator, x_train, config)
     search = GridSearchCV(
         estimator=pipeline,
         param_grid=spec.param_grid,
@@ -395,15 +512,16 @@ def train_models(config: dict[str, Any]) -> tuple[list[ModelResult], ModelResult
     dataset_path = config["data"]["versions"][dataset_version]["path"]
     dataset = load_dataframe(dataset_path)
 
-    target_column = config["schema"]["target_column"]
-    target = dataset[target_column].astype(int)
-    features = dataset.drop(columns=[target_column])
-
-    x_train, x_validation, x_test, y_train, y_validation, y_test = _split_dataset(
-        features,
-        target,
-        config,
-    )
+    (
+        x_train,
+        x_validation,
+        x_test,
+        y_train,
+        y_validation,
+        y_test,
+        preprocessing_metadata,
+        feature_columns,
+    ) = _prepare_leakage_safe_modeling_data(dataset, config)
 
     specs = _make_model_specs(config, y_train)
     results = [
@@ -449,6 +567,8 @@ def train_models(config: dict[str, Any]) -> tuple[list[ModelResult], ModelResult
         "test_recall": best_result.test_metrics["recall"],
         "test_f1": best_result.test_metrics["f1"],
         "dataset_version": dataset_version,
+        "preprocessing_fit_scope": preprocessing_metadata["fit_scope"],
+        "feature_count": len(feature_columns),
         "comparison_table": str(resolve_path(config["artifacts"]["comparison_table"])),
     }
     write_json(config["artifacts"]["best_model_summary"], summary)

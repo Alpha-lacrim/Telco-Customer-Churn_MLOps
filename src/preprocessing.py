@@ -31,6 +31,7 @@ def clean_raw_dataframe(
     metadata: dict[str, Any] | None = None,
     fit_metadata: bool = True,
     include_target: bool = True,
+    log_progress: bool = True,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Clean raw records and return cleaned data plus preprocessing metadata."""
     target_column = config["schema"]["target_column"]
@@ -100,7 +101,8 @@ def clean_raw_dataframe(
     if include_target:
         ordered_columns.append(target_column)
     df = df[ordered_columns]
-    LOGGER.info("Cleaned dataframe with shape %s.", df.shape)
+    if log_progress:
+        LOGGER.info("Cleaned dataframe with shape %s.", df.shape)
     return df, metadata
 
 

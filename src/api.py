@@ -8,10 +8,10 @@ from functools import lru_cache
 from typing import Any
 
 import numpy as np
+import pandas as pd
 from fastapi import Body, FastAPI, HTTPException
 
 from src.config import load_config, resolve_path
-from src.features import transform_raw_records_for_inference
 from src.logger import configure_logging
 from src.utils import read_json
 
@@ -23,13 +23,11 @@ app = FastAPI(title="Telco Customer Churn API", version="1.0.0")
 
 @lru_cache(maxsize=1)
 def _runtime_resources() -> dict[str, Any]:
-    """Load config, metadata, feature schema, and MLflow model once per process."""
+    """Load config, threshold metadata, and MLflow model once per process."""
     import mlflow.sklearn
 
     config_path = os.getenv("CONFIG_PATH", "config.yaml")
     config = load_config(config_path)
-    metadata = read_json(config["artifacts"]["preprocessing_metadata"])
-    feature_columns = read_json(config["artifacts"]["feature_columns"])
     best_model_summary = read_json(config["artifacts"]["best_model_summary"])
     model_uri = os.getenv("MODEL_URI", config["deployment"]["model_uri"])
     if "://" not in model_uri and not model_uri.startswith("runs:"):
@@ -39,8 +37,6 @@ def _runtime_resources() -> dict[str, Any]:
     LOGGER.info("Loaded MLflow model from %s.", model_uri)
     return {
         "config": config,
-        "metadata": metadata,
-        "feature_columns": feature_columns,
         "model": model,
         "model_uri": model_uri,
         "decision_threshold": float(best_model_summary.get("decision_threshold", 0.5)),
@@ -76,12 +72,7 @@ def predict(payload: Any = Body(...)) -> dict[str, Any]:
     """Predict churn probabilities and classes for one or more customers."""
     resources = _runtime_resources()
     records = _parse_records(payload)
-    features = transform_raw_records_for_inference(
-        records=records,
-        config=resources["config"],
-        metadata=resources["metadata"],
-        feature_columns=resources["feature_columns"],
-    )
+    features = pd.DataFrame.from_records(records)
     model = resources["model"]
 
     if not hasattr(model, "predict_proba"):
