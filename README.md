@@ -92,7 +92,7 @@ This single command:
 - creates stratified train, validation, and test splits
 - fits model preprocessing inside sklearn pipelines after splitting to avoid leakage
 - trains Logistic Regression, Random Forest, XGBoost, and CatBoost
-- runs stratified K-fold `GridSearchCV`
+- runs stratified K-fold multi-metric `GridSearchCV`
 - evaluates accuracy, precision, recall, F1, ROC AUC, and confusion matrices
 - tunes the classification decision threshold on the validation set for the configured objective
 - refits the selected pipeline on train+validation before final test reporting and deployment
@@ -161,6 +161,11 @@ Endpoint:
 POST /predict
 ```
 
+Requests must use a JSON object with a non-empty `records` list. Each record
+must include the required IBM Telco inference columns shown below. Unknown
+fields, missing fields, invalid categories, and out-of-range numeric values
+return FastAPI `422` validation errors.
+
 Example request:
 
 ```json
@@ -212,6 +217,6 @@ Example response:
 
 All project constants live in `config.yaml`, including paths, random seed, split sizes, MLflow settings, model hyperparameter grids, and feature engineering rules.
 
-The pipeline can select the best model with `training.model_selection_metric`. The current configuration uses `overall_score`, a weighted validation metric that combines ROC AUC, balanced accuracy, F1, accuracy, and recall. Each model's probability threshold is tuned on the validation split using `training.decision_threshold_metric`, so API class predictions use the same threshold chosen during training without using the test set for model selection.
+The pipeline can select the best model with `training.model_selection_metric`. The current configuration uses `overall_score`, a weighted validation metric that combines ROC AUC, balanced accuracy, F1, accuracy, and recall. Hyperparameter search is also aligned to this objective through multi-metric `training.scoring` and `training.hyperparameter_refit_metric`. Each model's probability threshold is tuned on the validation split using `training.decision_threshold_metric`, so API class predictions use the same threshold chosen during training without using the test set for model selection.
 
 After validation-based model and threshold selection, the winning sklearn pipeline is cloned and refit on train+validation. Test metrics are reported from that final refit while the test split remains held out from preprocessing, hyperparameter search, threshold tuning, and model selection.

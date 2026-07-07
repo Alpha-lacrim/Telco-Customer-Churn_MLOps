@@ -100,7 +100,14 @@ training:
   validation_size: 0.20
   random_seed: 42
   cv_splits: 5
-  scoring: roc_auc
+  scoring:
+    roc_auc: roc_auc
+    balanced_accuracy: balanced_accuracy
+    f1: f1
+    accuracy: accuracy
+    recall: recall
+    overall_score: overall_score
+  hyperparameter_refit_metric: overall_score
   model_selection_metric: overall_score
   decision_threshold_metric: overall_score
   overall_score_weights:

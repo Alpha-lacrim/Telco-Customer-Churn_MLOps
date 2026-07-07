@@ -6,11 +6,12 @@ import logging
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import load_config, resolve_path
 from src.logger import configure_logging
@@ -20,6 +21,127 @@ configure_logging()
 LOGGER = logging.getLogger(__name__)
 
 app = FastAPI(title="Telco Customer Churn API", version="1.0.0")
+
+
+YesNo = Literal["No", "Yes"]
+
+
+class TelcoCustomerRecord(BaseModel):
+    """Validated inference payload using IBM Telco column aliases."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+        str_strip_whitespace=True,
+    )
+
+    gender: Literal["Female", "Male"] = Field(..., alias="Gender")
+    senior_citizen: YesNo = Field(..., alias="Senior Citizen")
+    partner: YesNo = Field(..., alias="Partner")
+    dependents: YesNo = Field(..., alias="Dependents")
+    tenure_months: int = Field(..., alias="Tenure Months", ge=0, le=120)
+    phone_service: YesNo = Field(..., alias="Phone Service")
+    multiple_lines: Literal["No", "No phone service", "Yes"] = Field(
+        ...,
+        alias="Multiple Lines",
+    )
+    internet_service: Literal["DSL", "Fiber optic", "No"] = Field(
+        ...,
+        alias="Internet Service",
+    )
+    online_security: Literal["No", "No internet service", "Yes"] = Field(
+        ...,
+        alias="Online Security",
+    )
+    online_backup: Literal["No", "No internet service", "Yes"] = Field(
+        ...,
+        alias="Online Backup",
+    )
+    device_protection: Literal["No", "No internet service", "Yes"] = Field(
+        ...,
+        alias="Device Protection",
+    )
+    tech_support: Literal["No", "No internet service", "Yes"] = Field(
+        ...,
+        alias="Tech Support",
+    )
+    streaming_tv: Literal["No", "No internet service", "Yes"] = Field(
+        ...,
+        alias="Streaming TV",
+    )
+    streaming_movies: Literal["No", "No internet service", "Yes"] = Field(
+        ...,
+        alias="Streaming Movies",
+    )
+    contract: Literal["Month-to-month", "One year", "Two year"] = Field(
+        ...,
+        alias="Contract",
+    )
+    paperless_billing: YesNo = Field(..., alias="Paperless Billing")
+    payment_method: Literal[
+        "Bank transfer (automatic)",
+        "Credit card (automatic)",
+        "Electronic check",
+        "Mailed check",
+    ] = Field(..., alias="Payment Method")
+    monthly_charges: float = Field(
+        ...,
+        alias="Monthly Charges",
+        ge=0.0,
+        le=1000.0,
+        allow_inf_nan=False,
+    )
+    total_charges: float = Field(
+        ...,
+        alias="Total Charges",
+        ge=0.0,
+        le=100000.0,
+        allow_inf_nan=False,
+    )
+    latitude: float = Field(
+        ...,
+        alias="Latitude",
+        ge=-90.0,
+        le=90.0,
+        allow_inf_nan=False,
+    )
+    longitude: float = Field(
+        ...,
+        alias="Longitude",
+        ge=-180.0,
+        le=180.0,
+        allow_inf_nan=False,
+    )
+
+
+class PredictionRequest(BaseModel):
+    """Batch prediction request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    records: list[TelcoCustomerRecord] = Field(..., min_length=1, max_length=1000)
+
+
+class PredictionItem(BaseModel):
+    """Single prediction response."""
+
+    predicted_class: Literal[0, 1]
+    decision_threshold: float = Field(..., ge=0.0, le=1.0)
+    probability_stayed: float = Field(..., ge=0.0, le=1.0)
+    probability_churned: float = Field(..., ge=0.0, le=1.0)
+
+
+class PredictionResponse(BaseModel):
+    """Batch prediction response."""
+
+    predictions: list[PredictionItem]
+
+
+class HealthResponse(BaseModel):
+    """Health check response."""
+
+    status: Literal["ok"]
+    model_uri: str
 
 
 def _decision_threshold(config: dict[str, Any]) -> float:
@@ -70,36 +192,20 @@ def _runtime_resources() -> dict[str, Any]:
     }
 
 
-def _parse_records(payload: Any) -> list[dict[str, Any]]:
-    """Accept either a single JSON object, a list, or an object with records."""
-    if isinstance(payload, dict) and "records" in payload:
-        payload = payload["records"]
-
-    if isinstance(payload, dict):
-        records = [payload]
-    elif isinstance(payload, list):
-        records = payload
-    else:
-        raise HTTPException(status_code=422, detail="Request body must be a JSON object or list.")
-
-    if not records or not all(isinstance(record, dict) for record in records):
-        raise HTTPException(status_code=422, detail="Each prediction record must be a JSON object.")
-    return records
-
-
-@app.get("/health")
-def health() -> dict[str, str]:
+@app.get("/health", response_model=HealthResponse)
+def health() -> HealthResponse:
     """Report API health and model source."""
     resources = _runtime_resources()
-    return {"status": "ok", "model_uri": resources["model_uri"]}
+    return HealthResponse(status="ok", model_uri=resources["model_uri"])
 
 
-@app.post("/predict")
-def predict(payload: Any = Body(...)) -> dict[str, Any]:
+@app.post("/predict", response_model=PredictionResponse)
+def predict(request: PredictionRequest) -> PredictionResponse:
     """Predict churn probabilities and classes for one or more customers."""
     resources = _runtime_resources()
-    records = _parse_records(payload)
-    features = pd.DataFrame.from_records(records)
+    features = pd.DataFrame.from_records(
+        [record.model_dump(by_alias=True) for record in request.records]
+    )
     model = resources["model"]
 
     if not hasattr(model, "predict_proba"):
@@ -112,11 +218,11 @@ def predict(payload: Any = Body(...)) -> dict[str, Any]:
     predictions = []
     for index, predicted_class in enumerate(predicted_classes):
         predictions.append(
-            {
-                "predicted_class": int(predicted_class),
-                "decision_threshold": float(decision_threshold),
-                "probability_stayed": float(probabilities[index, 0]),
-                "probability_churned": float(probabilities[index, 1]),
-            }
+            PredictionItem(
+                predicted_class=int(predicted_class),
+                decision_threshold=float(decision_threshold),
+                probability_stayed=float(probabilities[index, 0]),
+                probability_churned=float(probabilities[index, 1]),
+            )
         )
-    return {"predictions": predictions}
+    return PredictionResponse(predictions=predictions)

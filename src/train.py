@@ -50,6 +50,8 @@ class ModelResult:
     estimator: Pipeline
     best_params: dict[str, Any]
     cv_best_score: float
+    cv_refit_metric: str
+    cv_scores: dict[str, float]
     decision_threshold: float
     threshold_metric: str
     threshold_metric_score: float
@@ -99,9 +101,77 @@ class CleanFeatureEngineer(BaseEstimator, TransformerMixin):
         )
 
 
+@dataclass(frozen=True)
+class OverallScoreScorer:
+    """Business-objective scorer for GridSearchCV."""
+
+    weights: dict[str, float] | None = None
+
+    def __call__(self, estimator: Any, features: pd.DataFrame, target: pd.Series) -> float:
+        metrics = compute_classification_metrics(
+            estimator,
+            features,
+            target,
+            decision_threshold=0.5,
+            overall_score_weights=self.weights,
+        )
+        return float(metrics["overall_score"])
+
+
 def _to_float_array(features: Any) -> np.ndarray:
     """Convert mixed transformer output to a plain numeric array for estimators."""
     return np.asarray(features, dtype=np.float64)
+
+
+def _scorer_from_name(name: str, config: dict[str, Any]) -> str | OverallScoreScorer:
+    """Return a sklearn scorer by configured metric name."""
+    supported_scorers = {
+        "accuracy": "accuracy",
+        "balanced_accuracy": "balanced_accuracy",
+        "f1": "f1",
+        "precision": "precision",
+        "recall": "recall",
+        "roc_auc": "roc_auc",
+    }
+    if name == "overall_score":
+        return OverallScoreScorer(config["training"].get("overall_score_weights"))
+    if name in supported_scorers:
+        return supported_scorers[name]
+    raise ValueError(f"Unsupported GridSearchCV scoring metric: {name}")
+
+
+def _grid_search_scoring(config: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Build multi-metric scoring and the configured refit key."""
+    scoring_config = config["training"].get("scoring", "roc_auc")
+
+    if isinstance(scoring_config, str):
+        metric_names = [scoring_config]
+        scoring = {scoring_config: _scorer_from_name(scoring_config, config)}
+    elif isinstance(scoring_config, list):
+        metric_names = [str(metric_name) for metric_name in scoring_config]
+        scoring = {
+            metric_name: _scorer_from_name(metric_name, config)
+            for metric_name in metric_names
+        }
+    elif isinstance(scoring_config, dict):
+        metric_names = [str(metric_name) for metric_name in scoring_config]
+        scoring = {
+            str(metric_name): _scorer_from_name(str(scorer_name), config)
+            for metric_name, scorer_name in scoring_config.items()
+        }
+    else:
+        raise ValueError("training.scoring must be a metric name, list, or mapping.")
+
+    refit_metric = str(
+        config["training"].get(
+            "hyperparameter_refit_metric",
+            config["training"].get("model_selection_metric", metric_names[0]),
+        )
+    )
+    if refit_metric not in scoring:
+        scoring[refit_metric] = _scorer_from_name(refit_metric, config)
+
+    return scoring, refit_metric
 
 
 def _build_preprocessor(features: pd.DataFrame, config: dict[str, Any]) -> ColumnTransformer:
@@ -383,18 +453,23 @@ def _train_single_model(
         random_state=random_seed,
     )
     pipeline = _make_pipeline(spec.estimator, x_train, config)
+    scoring, refit_metric = _grid_search_scoring(config)
     search = GridSearchCV(
         estimator=pipeline,
         param_grid=spec.param_grid,
-        scoring=config["training"]["scoring"],
+        scoring=scoring,
         cv=cv,
         n_jobs=int(config["training"]["n_jobs"]),
-        refit=True,
+        refit=refit_metric,
         verbose=0,
     )
     search.fit(x_train, y_train)
 
     best_estimator = search.best_estimator_
+    cv_scores = {
+        metric_name: float(search.cv_results_[f"mean_test_{metric_name}"][search.best_index_])
+        for metric_name in scoring
+    }
     threshold_config = config["training"]["decision_threshold_search"]
     threshold_metric = config["training"]["decision_threshold_metric"]
     overall_score_weights = config["training"].get("overall_score_weights")
@@ -454,6 +529,8 @@ def _train_single_model(
         estimator=best_estimator,
         best_params=dict(search.best_params_),
         cv_best_score=float(search.best_score_),
+        cv_refit_metric=refit_metric,
+        cv_scores=cv_scores,
         decision_threshold=decision_threshold,
         threshold_metric=threshold_metric,
         threshold_metric_score=threshold_metric_score,
@@ -529,12 +606,15 @@ def _comparison_table(results: list[ModelResult], config: dict[str, Any]) -> pd.
     for result in results:
         row: dict[str, Any] = {
             "model_name": result.model_name,
-            "cv_best_roc_auc": result.cv_best_score,
+            "cv_refit_metric": result.cv_refit_metric,
+            "cv_best_score": result.cv_best_score,
             "decision_threshold": result.decision_threshold,
             "threshold_metric": result.threshold_metric,
             "threshold_metric_score": result.threshold_metric_score,
             "execution_time_seconds": result.execution_time_seconds,
         }
+        for metric_name, metric_value in result.cv_scores.items():
+            row[f"cv_best_{metric_name}"] = metric_value
         for metric_name, metric_value in result.validation_metrics.items():
             if metric_name != "confusion_matrix":
                 row[f"validation_{metric_name}"] = metric_value
@@ -618,6 +698,9 @@ def train_models(config: dict[str, Any]) -> tuple[list[ModelResult], ModelResult
     summary = {
         "best_model": best_result.model_name,
         "best_params": best_result.best_params,
+        "cv_refit_metric": best_result.cv_refit_metric,
+        "cv_best_score": best_result.cv_best_score,
+        "cv_scores": best_result.cv_scores,
         "selection_metric": f"validation_{selection_metric}",
         "selection_score": best_result.validation_metrics[selection_metric],
         "decision_threshold": best_result.decision_threshold,
