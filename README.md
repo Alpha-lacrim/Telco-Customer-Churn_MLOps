@@ -12,7 +12,7 @@ The pipeline creates three dataset versions:
 - `data/v2/telco_churn_v2_clean_encoded.csv`: cleaned, imputed, and one-hot encoded data.
 - `data/v3/telco_churn_v3_features.csv`: realistic domain features plus encoded modeling columns.
 
-The saved v2 and v3 files are assignment artifacts. Model training loads v1, performs the train/validation/test split first, then fits imputation, feature engineering, one-hot encoding, and scaling inside sklearn pipelines during cross-validation and training.
+The saved v2 and v3 files are assignment artifacts. Model training loads v1, performs the train/validation/test split first, then fits imputation, feature engineering, one-hot encoding, and scaling inside sklearn pipelines during cross-validation, model selection, and the final train+validation refit.
 
 ## Project Structure
 
@@ -95,6 +95,7 @@ This single command:
 - runs stratified K-fold `GridSearchCV`
 - evaluates accuracy, precision, recall, F1, ROC AUC, and confusion matrices
 - tunes the classification decision threshold on the validation set for the configured objective
+- refits the selected pipeline on train+validation before final test reporting and deployment
 - logs runs, metrics, parameters, artifacts, and models to MLflow
 - registers the best model by the configured validation selection metric
 - saves a deployable MLflow model under `models/best_model`
@@ -213,4 +214,4 @@ All project constants live in `config.yaml`, including paths, random seed, split
 
 The pipeline can select the best model with `training.model_selection_metric`. The current configuration uses `overall_score`, a weighted validation metric that combines ROC AUC, balanced accuracy, F1, accuracy, and recall. Each model's probability threshold is tuned on the validation split using `training.decision_threshold_metric`, so API class predictions use the same threshold chosen during training without using the test set for model selection.
 
-Test metrics are reported after validation-based model and threshold selection.
+After validation-based model and threshold selection, the winning sklearn pipeline is cloned and refit on train+validation. Test metrics are reported from that final refit while the test split remains held out from preprocessing, hyperparameter search, threshold tuning, and model selection.

@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -330,12 +330,15 @@ def _prepare_leakage_safe_modeling_data(
 
     feature_columns = list(x_train_raw.columns)
     preprocessing_metadata = {
-        "fit_scope": "inside_sklearn_pipeline_cv_folds",
+        "fit_scope": "inside_sklearn_pipeline_after_split",
+        "selection_fit_scope": "train_only_grid_search_cv",
+        "final_model_fit_scope": "train_plus_validation_after_selection",
         "raw_feature_columns": feature_columns,
         "target_column": target_column,
         "dropped_columns": config["schema"]["drop_columns"],
         "training_rows": int(x_train_raw.shape[0]),
         "validation_rows": int(x_validation_raw.shape[0]),
+        "final_training_rows": int(x_train_raw.shape[0] + x_validation_raw.shape[0]),
         "test_rows": int(x_test_raw.shape[0]),
     }
 
@@ -462,6 +465,64 @@ def _train_single_model(
     )
 
 
+def _refit_selected_model_on_train_validation(
+    best_result: ModelResult,
+    x_train: pd.DataFrame,
+    y_train: pd.Series,
+    x_validation: pd.DataFrame,
+    y_validation: pd.Series,
+    x_test: pd.DataFrame,
+    y_test: pd.Series,
+    config: dict[str, Any],
+) -> ModelResult:
+    """Refit the selected pipeline on train+validation before deployment."""
+    LOGGER.info(
+        "Refitting selected model %s on train+validation before deployment.",
+        best_result.model_name,
+    )
+    start_time = time.perf_counter()
+    x_train_validation = pd.concat([x_train, x_validation], axis=0)
+    y_train_validation = pd.concat([y_train, y_validation], axis=0)
+
+    final_estimator = clone(best_result.estimator)
+    final_estimator.fit(x_train_validation, y_train_validation)
+    best_result.estimator = final_estimator
+    best_result.execution_time_seconds += float(time.perf_counter() - start_time)
+
+    overall_score_weights = config["training"].get("overall_score_weights")
+    best_result.test_metrics = compute_classification_metrics(
+        final_estimator,
+        x_test,
+        y_test,
+        decision_threshold=best_result.decision_threshold,
+        overall_score_weights=overall_score_weights,
+    )
+
+    confusion_matrix_path = save_confusion_matrix_artifact(
+        best_result.model_name,
+        best_result.test_metrics["confusion_matrix"],
+        config["artifacts"]["confusion_matrix_dir"],
+    )
+    feature_importance_path = save_feature_importance_artifact(
+        best_result.model_name,
+        final_estimator,
+        list(x_train.columns),
+        config["artifacts"]["feature_importance_dir"],
+    )
+
+    best_result.artifact_paths = {"confusion_matrix": str(confusion_matrix_path)}
+    if feature_importance_path is not None:
+        best_result.artifact_paths["feature_importance"] = str(feature_importance_path)
+
+    LOGGER.info(
+        "Refit %s on %s train+validation rows. final_test_roc_auc=%.4f",
+        best_result.model_name,
+        x_train_validation.shape[0],
+        best_result.test_metrics["roc_auc"],
+    )
+    return best_result
+
+
 def _comparison_table(results: list[ModelResult], config: dict[str, Any]) -> pd.DataFrame:
     """Build a concise model comparison table."""
     rows = []
@@ -538,10 +599,21 @@ def train_models(config: dict[str, Any]) -> tuple[list[ModelResult], ModelResult
         for spec in specs
     ]
 
+    best_result = _select_best_model(results, config)
+    best_result = _refit_selected_model_on_train_validation(
+        best_result=best_result,
+        x_train=x_train,
+        y_train=y_train,
+        x_validation=x_validation,
+        y_validation=y_validation,
+        x_test=x_test,
+        y_test=y_test,
+        config=config,
+    )
+
     comparison = _comparison_table(results, config)
     save_dataframe(comparison, config["artifacts"]["comparison_table"])
 
-    best_result = _select_best_model(results, config)
     selection_metric = config["training"].get("model_selection_metric", "roc_auc")
     summary = {
         "best_model": best_result.model_name,
@@ -568,6 +640,10 @@ def train_models(config: dict[str, Any]) -> tuple[list[ModelResult], ModelResult
         "test_f1": best_result.test_metrics["f1"],
         "dataset_version": dataset_version,
         "preprocessing_fit_scope": preprocessing_metadata["fit_scope"],
+        "selection_fit_scope": preprocessing_metadata["selection_fit_scope"],
+        "final_model_fit_scope": preprocessing_metadata["final_model_fit_scope"],
+        "final_model_training_rows": preprocessing_metadata["final_training_rows"],
+        "test_metrics_scope": "final_refit_model_on_held_out_test",
         "feature_count": len(feature_columns),
         "comparison_table": str(resolve_path(config["artifacts"]["comparison_table"])),
     }
