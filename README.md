@@ -40,8 +40,11 @@ The saved v2 and v3 files are assignment artifacts. Model training loads v1, per
 |-- artifacts/
 |-- notebooks/
 |-- mlruns/
+|-- tests/
+|-- .github/workflows/ci.yml
 |-- config.yaml
 |-- Dockerfile
+|-- requirements.lock
 |-- requirements.txt
 |-- run_pipeline.py
 `-- README.md
@@ -68,6 +71,9 @@ Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
+
+`requirements.txt` installs the exact package versions pinned in
+`requirements.lock`, which is also used by Docker and CI.
 
 Use a clean virtual environment for this project. Mixing conda base packages with user-site packages can produce binary incompatibilities in NumPy, SciPy, or scikit-learn.
 
@@ -130,6 +136,19 @@ python run_pipeline.py --config config.yaml
 Upload the ignored data files to the same relative paths under that remote URI.
 The checksums in `data/registry/manifest.json` are the reproducibility contract
 for restoring or auditing a data version.
+
+## Tests and CI
+
+Run the test suite locally:
+
+```bash
+python -m pytest -q
+```
+
+The suite covers preprocessing metadata reuse, feature engineering,
+threshold optimization, strict API request validation, and a smoke run of
+`run_pipeline.py --skip-mlflow` with a synthetic dataset. GitHub Actions runs
+the same checks on pushes and pull requests to `main`.
 
 ## Docker Deployment
 
@@ -239,6 +258,6 @@ Example response:
 
 All project constants live in `config.yaml`, including paths, random seed, split sizes, MLflow settings, model hyperparameter grids, and feature engineering rules.
 
-The pipeline can select the best model with `training.model_selection_metric`. The current configuration uses `overall_score`, a weighted validation metric that combines ROC AUC, balanced accuracy, F1, accuracy, and recall. Hyperparameter search is also aligned to this objective through multi-metric `training.scoring` and `training.hyperparameter_refit_metric`. Each model's probability threshold is tuned on the validation split using `training.decision_threshold_metric`, so API class predictions use the same threshold chosen during training without using the test set for model selection.
+The pipeline can select the best model with `training.model_selection_metric`. The current configuration uses `overall_score`, a weighted validation metric that combines ROC AUC, balanced accuracy, F1, accuracy, and recall. Hyperparameter search is also aligned to this objective through multi-metric `training.scoring` and `training.hyperparameter_refit_metric`. Validation ROC AUC is still logged and reported as a component metric, but it is not the configured selection or refit objective. Each model's probability threshold is tuned on the validation split using `training.decision_threshold_metric`, so API class predictions use the same threshold chosen during training without using the test set for model selection.
 
 After validation-based model and threshold selection, the winning sklearn pipeline is cloned and refit on train+validation. Test metrics are reported from that final refit while the test split remains held out from preprocessing, hyperparameter search, threshold tuning, and model selection.
