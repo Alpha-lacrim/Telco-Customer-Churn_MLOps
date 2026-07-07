@@ -1,0 +1,98 @@
+{
+  "checksum_algorithm": "sha256",
+  "latest_version": "v3",
+  "registry_format": "telco-data-registry-v1",
+  "updated_utc": "2026-07-07T01:37:08.381217+00:00",
+  "versions": {
+    "v1": {
+      "artifact": {
+        "modified_utc": "2026-07-07T01:37:07.983596+00:00",
+        "path": "data/v1/telco_churn_v1.csv",
+        "sha256": "b21802f51fac022c7b215fd632dbb415e0402d0b4e67ff6a93c8612f4cf01380",
+        "size_bytes": 1743023
+      },
+      "checksum_algorithm": "sha256",
+      "columns": 33,
+      "created_utc": "2026-07-07T01:37:07.985995+00:00",
+      "dataset_version": "v1",
+      "metadata": {
+        "modified_utc": "2026-07-07T01:37:07.985996+00:00",
+        "path": "data/v1/metadata.json",
+        "sha256": "c16e08ee9c143691999b707bad3d8f5b7470c321117ce5f2f2d7d3c5269f061c",
+        "size_bytes": 908
+      },
+      "rows": 7043,
+      "sources": [
+        {
+          "modified_utc": "2020-12-07T05:52:44+00:00",
+          "path": "data/raw/Telco_customer_churn.xlsx",
+          "sha256": "1bcbc0ccc9b352175216979102628e579cfbde2c3ff57b005de168a433122640",
+          "size_bytes": 1368250
+        }
+      ],
+      "stage": "raw_excel_to_csv"
+    },
+    "v2": {
+      "artifact": {
+        "modified_utc": "2026-07-07T01:37:08.150382+00:00",
+        "path": "data/v2/telco_churn_v2_clean_encoded.csv",
+        "sha256": "81e2d2d85f57aef04ba8c2f2e7df8728725de00cec0e6bed34b8ecbc76614050",
+        "size_bytes": 889333
+      },
+      "checksum_algorithm": "sha256",
+      "columns": 49,
+      "created_utc": "2026-07-07T01:37:08.152334+00:00",
+      "dataset_version": "v2",
+      "extra": {
+        "parent_version": "v1"
+      },
+      "metadata": {
+        "modified_utc": "2026-07-07T01:37:08.151320+00:00",
+        "path": "data/v2/preprocessing_metadata.json",
+        "sha256": "6f372bd069d1e56b509782ef125723f6021f5403a41fb685185b8c8b73e6021d",
+        "size_bytes": 2942
+      },
+      "rows": 7043,
+      "sources": [
+        {
+          "modified_utc": "2026-07-07T01:37:07.983596+00:00",
+          "path": "data/v1/telco_churn_v1.csv",
+          "sha256": "b21802f51fac022c7b215fd632dbb415e0402d0b4e67ff6a93c8612f4cf01380",
+          "size_bytes": 1743023
+        }
+      ],
+      "stage": "clean_and_encode"
+    },
+    "v3": {
+      "artifact": {
+        "modified_utc": "2026-07-07T01:37:08.370970+00:00",
+        "path": "data/v3/telco_churn_v3_features.csv",
+        "sha256": "538ba148c81c631e92c5f3fb8774d47f7d260d288f8802a0bfcfd74c28fc3ad9",
+        "size_bytes": 1262554
+      },
+      "checksum_algorithm": "sha256",
+      "columns": 65,
+      "created_utc": "2026-07-07T01:37:08.373776+00:00",
+      "dataset_version": "v3",
+      "extra": {
+        "parent_version": "v1"
+      },
+      "metadata": {
+        "modified_utc": "2026-07-07T01:37:08.371963+00:00",
+        "path": "data/v3/feature_metadata.json",
+        "sha256": "ed6851db3b41354a3c9a87c8fdf1a273f2237f347e14b2d021a5a570f06c71dd",
+        "size_bytes": 3739
+      },
+      "rows": 7043,
+      "sources": [
+        {
+          "modified_utc": "2026-07-07T01:37:07.983596+00:00",
+          "path": "data/v1/telco_churn_v1.csv",
+          "sha256": "b21802f51fac022c7b215fd632dbb415e0402d0b4e67ff6a93c8612f4cf01380",
+          "size_bytes": 1743023
+        }
+      ],
+      "stage": "feature_engineering"
+    }
+  }
+}

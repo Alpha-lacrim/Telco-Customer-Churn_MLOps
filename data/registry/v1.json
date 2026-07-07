@@ -1,0 +1,28 @@
+{
+  "artifact": {
+    "modified_utc": "2026-07-07T01:37:07.983596+00:00",
+    "path": "data/v1/telco_churn_v1.csv",
+    "sha256": "b21802f51fac022c7b215fd632dbb415e0402d0b4e67ff6a93c8612f4cf01380",
+    "size_bytes": 1743023
+  },
+  "checksum_algorithm": "sha256",
+  "columns": 33,
+  "created_utc": "2026-07-07T01:37:07.985995+00:00",
+  "dataset_version": "v1",
+  "metadata": {
+    "modified_utc": "2026-07-07T01:37:07.985996+00:00",
+    "path": "data/v1/metadata.json",
+    "sha256": "c16e08ee9c143691999b707bad3d8f5b7470c321117ce5f2f2d7d3c5269f061c",
+    "size_bytes": 908
+  },
+  "rows": 7043,
+  "sources": [
+    {
+      "modified_utc": "2020-12-07T05:52:44+00:00",
+      "path": "data/raw/Telco_customer_churn.xlsx",
+      "sha256": "1bcbc0ccc9b352175216979102628e579cfbde2c3ff57b005de168a433122640",
+      "size_bytes": 1368250
+    }
+  ],
+  "stage": "raw_excel_to_csv"
+}

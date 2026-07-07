@@ -1,0 +1,31 @@
+{
+  "artifact": {
+    "modified_utc": "2026-07-07T01:37:08.150382+00:00",
+    "path": "data/v2/telco_churn_v2_clean_encoded.csv",
+    "sha256": "81e2d2d85f57aef04ba8c2f2e7df8728725de00cec0e6bed34b8ecbc76614050",
+    "size_bytes": 889333
+  },
+  "checksum_algorithm": "sha256",
+  "columns": 49,
+  "created_utc": "2026-07-07T01:37:08.152334+00:00",
+  "dataset_version": "v2",
+  "extra": {
+    "parent_version": "v1"
+  },
+  "metadata": {
+    "modified_utc": "2026-07-07T01:37:08.151320+00:00",
+    "path": "data/v2/preprocessing_metadata.json",
+    "sha256": "6f372bd069d1e56b509782ef125723f6021f5403a41fb685185b8c8b73e6021d",
+    "size_bytes": 2942
+  },
+  "rows": 7043,
+  "sources": [
+    {
+      "modified_utc": "2026-07-07T01:37:07.983596+00:00",
+      "path": "data/v1/telco_churn_v1.csv",
+      "sha256": "b21802f51fac022c7b215fd632dbb415e0402d0b4e67ff6a93c8612f4cf01380",
+      "size_bytes": 1743023
+    }
+  ],
+  "stage": "clean_and_encode"
+}
