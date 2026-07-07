@@ -21,6 +21,7 @@ configure_logging()
 LOGGER = logging.getLogger(__name__)
 
 app = FastAPI(title="Telco Customer Churn API", version="1.0.0")
+MODEL_METADATA_FILENAME = "model_metadata.json"
 
 
 YesNo = Literal["No", "Yes"]
@@ -144,15 +145,17 @@ class HealthResponse(BaseModel):
     model_uri: str
 
 
-def _decision_threshold(config: dict[str, Any]) -> float:
-    """Load threshold from env first, then optional training summary."""
+def _decision_threshold(model_metadata: dict[str, Any]) -> float:
+    """Load threshold from env first, then bundled model metadata."""
     threshold_override = os.getenv("DECISION_THRESHOLD")
     if threshold_override is not None:
         return float(threshold_override)
 
-    summary_path = resolve_path(config["artifacts"]["best_model_summary"])
-    if summary_path.exists():
-        return float(read_json(summary_path).get("decision_threshold", 0.5))
+    threshold = model_metadata.get("decision_threshold")
+    if threshold is not None:
+        return float(threshold)
+
+    LOGGER.warning("Model metadata has no decision_threshold; falling back to 0.5.")
     return 0.5
 
 
@@ -171,16 +174,55 @@ def _resolved_model_uri(model_uri: str) -> str:
     return str(resolved_path)
 
 
+def _download_model_artifact(model_uri: str) -> Path | None:
+    """Return a local model artifact path for metadata inspection."""
+    if "://" not in model_uri and not model_uri.startswith(("runs:", "models:")):
+        return Path(model_uri)
+
+    try:
+        import mlflow.artifacts
+
+        return Path(mlflow.artifacts.download_artifacts(artifact_uri=model_uri))
+    except Exception:
+        LOGGER.warning("Could not download MLflow model metadata artifact.", exc_info=True)
+        return None
+
+
+def _load_model_metadata(model_uri: str) -> dict[str, Any]:
+    """Load metadata packaged with an MLflow model artifact."""
+    local_model_path = _download_model_artifact(model_uri)
+    if local_model_path is None:
+        return {}
+
+    metadata: dict[str, Any] = {}
+    try:
+        from mlflow.models import Model
+
+        mlflow_model = Model.load(str(local_model_path))
+        metadata.update(dict(mlflow_model.metadata or {}))
+    except Exception:
+        LOGGER.warning("Could not read MLflow model metadata from MLmodel.", exc_info=True)
+
+    sidecar_path = local_model_path / MODEL_METADATA_FILENAME
+    if sidecar_path.exists():
+        try:
+            metadata.update(read_json(sidecar_path))
+        except Exception:
+            LOGGER.warning("Could not read bundled model metadata sidecar.", exc_info=True)
+    return metadata
+
+
 @lru_cache(maxsize=1)
 def _runtime_resources() -> dict[str, Any]:
-    """Load config, threshold metadata, and MLflow model once per process."""
+    """Load config, model metadata, and MLflow model once per process."""
     import mlflow.sklearn
 
     config_path = os.getenv("CONFIG_PATH", "config.yaml")
     config = load_config(config_path)
     model_uri = os.getenv("MODEL_URI", config["deployment"]["model_uri"])
     model_uri = _resolved_model_uri(model_uri)
-    decision_threshold = _decision_threshold(config)
+    model_metadata = _load_model_metadata(model_uri)
+    decision_threshold = _decision_threshold(model_metadata)
 
     model = mlflow.sklearn.load_model(model_uri)
     LOGGER.info("Loaded MLflow model from %s.", model_uri)
@@ -188,6 +230,7 @@ def _runtime_resources() -> dict[str, Any]:
         "config": config,
         "model": model,
         "model_uri": model_uri,
+        "model_metadata": model_metadata,
         "decision_threshold": decision_threshold,
     }
 

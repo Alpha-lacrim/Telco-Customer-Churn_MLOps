@@ -20,6 +20,7 @@ The saved v2 and v3 files are assignment artifacts. Model training loads v1, per
 .
 |-- data/
 |   |-- raw/
+|   |-- registry/
 |   |-- v1/
 |   |-- v2/
 |   `-- v3/
@@ -27,6 +28,7 @@ The saved v2 and v3 files are assignment artifacts. Model training loads v1, per
 |   |-- api.py
 |   |-- config.py
 |   |-- data_loader.py
+|   |-- data_registry.py
 |   |-- evaluate.py
 |   |-- features.py
 |   |-- logger.py
@@ -88,6 +90,7 @@ python run_pipeline.py --config config.yaml
 This single command:
 
 - creates data versions v1, v2, and v3
+- writes SHA-256 data registry manifests for each version
 - performs cleaning and feature engineering
 - creates stratified train, validation, and test splits
 - fits model preprocessing inside sklearn pipelines after splitting to avoid leakage
@@ -96,7 +99,7 @@ This single command:
 - evaluates accuracy, precision, recall, F1, ROC AUC, and confusion matrices
 - tunes the classification decision threshold on the validation set for the configured objective
 - refits the selected pipeline on train+validation before final test reporting and deployment
-- logs runs, metrics, parameters, artifacts, and models to MLflow
+- logs runs, metrics, parameters, artifacts, model signatures, input examples, and model metadata to MLflow
 - registers the best model by the configured validation selection metric
 - saves a deployable MLflow model under `models/best_model`
 
@@ -104,8 +107,29 @@ Useful outputs:
 
 - `artifacts/model_comparison.csv`
 - `artifacts/best_model_summary.json`
+- `models/best_model/model_metadata.json`
+- `data/registry/manifest.json`
 - `artifacts/confusion_matrices/`
 - `artifacts/feature_importance/`
+
+## Data Versioning
+
+Generated data files stay out of Git, but every pipeline run writes
+Git-trackable manifests under `data/registry/`. Each manifest records SHA-256
+checksums, file sizes, source/parent artifacts, row and column counts, and
+optional remote object storage URIs.
+
+To map manifests to remote storage, set `DATA_REMOTE_URI` before running the
+pipeline, or set `data_versioning.remote_uri` in `config.yaml`:
+
+```bash
+export DATA_REMOTE_URI=s3://your-bucket/telco-customer-churn
+python run_pipeline.py --config config.yaml
+```
+
+Upload the ignored data files to the same relative paths under that remote URI.
+The checksums in `data/registry/manifest.json` are the reproducibility contract
+for restoring or auditing a data version.
 
 ## Docker Deployment
 
@@ -124,7 +148,6 @@ MLflow model into the container:
 python run_pipeline.py
 docker run --rm -p 8000:8000 \
   -v "${PWD}/models/best_model:/app/models/best_model:ro" \
-  -e DECISION_THRESHOLD=0.5 \
   telco-churn-api
 ```
 
@@ -134,7 +157,6 @@ On Windows PowerShell, use:
 python run_pipeline.py
 docker run --rm -p 8000:8000 `
   -v "${PWD}\models\best_model:/app/models/best_model:ro" `
-  -e DECISION_THRESHOLD=0.5 `
   telco-churn-api
 ```
 
@@ -144,14 +166,14 @@ To load from an MLflow registry or run URI instead of a mounted local model:
 docker run --rm -p 8000:8000 \
   -e MLFLOW_TRACKING_URI=http://host.docker.internal:5000 \
   -e MODEL_URI=models:/TelcoCustomerChurnBestModel@champion \
-  -e DECISION_THRESHOLD=0.5 \
   telco-churn-api
 ```
 
-The prediction service is available at `http://127.0.0.1:8000`. If
-`DECISION_THRESHOLD` is not set, the API reads it from
-`artifacts/best_model_summary.json` when that file is mounted or present, and
-falls back to `0.5` otherwise.
+The prediction service is available at `http://127.0.0.1:8000`. The API reads
+the decision threshold from metadata packaged inside the MLflow model artifact.
+Set `DECISION_THRESHOLD` only when you intentionally need an operational
+override; otherwise the threshold, input schema, preprocessing metadata, and
+feature schema travel with the model.
 
 ## Prediction API
 

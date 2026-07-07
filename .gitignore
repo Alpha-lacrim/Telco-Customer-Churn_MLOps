@@ -31,6 +31,7 @@ data/v2/*.json
 data/v3/*.json
 
 !data/**/.gitkeep
+!data/registry/*.json
 !models/.gitkeep
 !artifacts/**/.gitkeep
 !notebooks/.gitkeep

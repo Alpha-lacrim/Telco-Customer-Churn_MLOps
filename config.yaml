@@ -17,6 +17,11 @@ data:
       path: data/v3/telco_churn_v3_features.csv
       metadata_path: data/v3/feature_metadata.json
 
+data_versioning:
+  registry_dir: data/registry
+  checksum_algorithm: sha256
+  remote_uri: ""
+
 schema:
   target_column: Churn Value
   source_columns:

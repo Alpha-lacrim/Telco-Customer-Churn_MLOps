@@ -13,6 +13,7 @@ from src.train import ModelResult
 from src.utils import flatten_dict, read_json, write_json
 
 LOGGER = logging.getLogger(__name__)
+MODEL_METADATA_FILENAME = "model_metadata.json"
 
 
 def _resolve_tracking_uri(config: dict[str, Any]) -> str:
@@ -38,6 +39,61 @@ def _log_metrics(mlflow_module: Any, prefix: str, metrics: dict[str, Any]) -> No
         if name == "confusion_matrix":
             continue
         mlflow_module.log_metric(f"{prefix}_{name}", float(value))
+
+
+def _read_json_if_exists(path: str | Path) -> Any:
+    """Read a JSON file when present."""
+    resolved_path = resolve_path(path)
+    if not resolved_path.exists():
+        return None
+    return read_json(resolved_path)
+
+
+def _input_schema_from_example(result: ModelResult) -> list[dict[str, str]]:
+    """Describe the raw inference columns used by the model package."""
+    return [
+        {"name": str(column), "dtype": str(dtype)}
+        for column, dtype in result.input_example.dtypes.items()
+    ]
+
+
+def _scalar_metrics(metrics: dict[str, Any]) -> dict[str, float]:
+    """Keep scalar metrics suitable for model metadata."""
+    return {
+        name: float(value)
+        for name, value in metrics.items()
+        if name != "confusion_matrix"
+    }
+
+
+def _model_metadata(config: dict[str, Any], result: ModelResult) -> dict[str, Any]:
+    """Create serving metadata that travels with the MLflow model artifact."""
+    return {
+        "model_name": result.model_name,
+        "training_timestamp_utc": result.training_timestamp,
+        "dataset_version": config["training"]["dataset_version"],
+        "decision_threshold": float(result.decision_threshold),
+        "threshold_metric": result.threshold_metric,
+        "threshold_metric_score": float(result.threshold_metric_score),
+        "cv_refit_metric": result.cv_refit_metric,
+        "cv_scores": result.cv_scores,
+        "validation_metrics": _scalar_metrics(result.validation_metrics),
+        "test_metrics": _scalar_metrics(result.test_metrics),
+        "input_columns": list(result.input_example.columns),
+        "input_schema": _input_schema_from_example(result),
+        "target_column": config["schema"]["target_column"],
+        "drop_columns": config["schema"]["drop_columns"],
+        "preprocessing_metadata": _read_json_if_exists(
+            config["artifacts"]["preprocessing_metadata"]
+        ),
+        "feature_columns": _read_json_if_exists(config["artifacts"]["feature_columns"]),
+    }
+
+
+def _infer_signature(mlflow_module: Any, result: ModelResult) -> Any:
+    """Infer a probability-output signature for MLflow model serving."""
+    predictions = result.estimator.predict_proba(result.input_example)
+    return mlflow_module.models.infer_signature(result.input_example, predictions)
 
 
 def _log_single_result(
@@ -91,11 +147,18 @@ def _log_single_result(
             },
         )
 
+        model_metadata = _model_metadata(config, result)
+        signature = _infer_signature(mlflow_module, result)
         mlflow_module.sklearn.log_model(
             result.estimator,
             artifact_path="model",
+            signature=signature,
+            input_example=result.input_example,
+            metadata=model_metadata,
+            pyfunc_predict_fn="predict_proba",
             serialization_format=mlflow_module.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
         )
+        mlflow_module.log_dict(model_metadata, f"model/{MODEL_METADATA_FILENAME}")
         LOGGER.info("Logged %s to MLflow run %s.", result.model_name, run.info.run_id)
         return run.info.run_id
 
@@ -140,11 +203,18 @@ def _save_local_mlflow_model(
     if model_path.exists():
         shutil.rmtree(model_path)
     model_path.parent.mkdir(parents=True, exist_ok=True)
+    model_metadata = _model_metadata(config, best_result)
+    signature = _infer_signature(mlflow_module, best_result)
     mlflow_module.sklearn.save_model(
         best_result.estimator,
         path=str(model_path),
+        signature=signature,
+        input_example=best_result.input_example,
+        metadata=model_metadata,
+        pyfunc_predict_fn="predict_proba",
         serialization_format=mlflow_module.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
     )
+    write_json(model_path / MODEL_METADATA_FILENAME, model_metadata)
     LOGGER.info("Saved best model for deployment to %s.", model_path)
     return model_path
 

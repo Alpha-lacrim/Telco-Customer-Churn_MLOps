@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from src.data_registry import write_data_version_manifest
 from src.utils import load_dataframe, save_dataframe, write_json
 
 LOGGER = logging.getLogger(__name__)
@@ -171,5 +172,16 @@ def preprocess_dataset(config: dict[str, Any], input_path: str) -> pd.DataFrame:
         if column != config["schema"]["target_column"]
     ]
     write_json(v2_config["metadata_path"], metadata)
+    write_data_version_manifest(
+        config=config,
+        dataset_version="v2",
+        dataset_path=v2_config["path"],
+        source_paths=[input_path],
+        metadata_path=v2_config["metadata_path"],
+        stage="clean_and_encode",
+        rows=int(encoded_dataframe.shape[0]),
+        columns=int(encoded_dataframe.shape[1]),
+        extra={"parent_version": "v1"},
+    )
     LOGGER.info("Created dataset version v2.")
     return encoded_dataframe

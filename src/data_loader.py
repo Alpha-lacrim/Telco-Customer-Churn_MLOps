@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 
 from src.config import resolve_path
+from src.data_registry import write_data_version_manifest
 from src.utils import save_dataframe, write_json
 
 LOGGER = logging.getLogger(__name__)
@@ -53,5 +54,15 @@ def load_and_version_raw_data(config: dict[str, Any]) -> Path:
         "column_names": list(dataframe.columns),
     }
     write_json(v1_config["metadata_path"], metadata)
+    write_data_version_manifest(
+        config=config,
+        dataset_version="v1",
+        dataset_path=output_path,
+        source_paths=[raw_copy_path],
+        metadata_path=v1_config["metadata_path"],
+        stage="raw_excel_to_csv",
+        rows=int(dataframe.shape[0]),
+        columns=int(dataframe.shape[1]),
+    )
     LOGGER.info("Created dataset version v1.")
     return output_path

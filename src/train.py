@@ -52,6 +52,7 @@ class ModelResult:
     cv_best_score: float
     cv_refit_metric: str
     cv_scores: dict[str, float]
+    input_example: pd.DataFrame
     decision_threshold: float
     threshold_metric: str
     threshold_metric_score: float
@@ -172,6 +173,17 @@ def _grid_search_scoring(config: dict[str, Any]) -> tuple[dict[str, Any], str]:
         scoring[refit_metric] = _scorer_from_name(refit_metric, config)
 
     return scoring, refit_metric
+
+
+def _inference_input_columns(features: pd.DataFrame, config: dict[str, Any]) -> list[str]:
+    """Return raw columns required for prediction requests."""
+    dropped_columns = set(config["schema"]["drop_columns"])
+    target_column = config["schema"]["target_column"]
+    return [
+        column
+        for column in features.columns
+        if column not in dropped_columns and column != target_column
+    ]
 
 
 def _build_preprocessor(features: pd.DataFrame, config: dict[str, Any]) -> ColumnTransformer:
@@ -531,6 +543,7 @@ def _train_single_model(
         cv_best_score=float(search.best_score_),
         cv_refit_metric=refit_metric,
         cv_scores=cv_scores,
+        input_example=x_train[_inference_input_columns(x_train, config)].head(5).copy(),
         decision_threshold=decision_threshold,
         threshold_metric=threshold_metric,
         threshold_metric_score=threshold_metric_score,

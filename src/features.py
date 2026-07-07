@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from src.data_registry import write_data_version_manifest
 from src.preprocessing import (
     align_to_feature_columns,
     clean_raw_dataframe,
@@ -146,6 +147,17 @@ def build_feature_dataset(config: dict[str, Any], input_path: str) -> pd.DataFra
     write_json(v3_config["metadata_path"], metadata)
     write_json(config["artifacts"]["preprocessing_metadata"], metadata)
     write_json(config["artifacts"]["feature_columns"], feature_columns)
+    write_data_version_manifest(
+        config=config,
+        dataset_version="v3",
+        dataset_path=v3_config["path"],
+        source_paths=[input_path],
+        metadata_path=v3_config["metadata_path"],
+        stage="feature_engineering",
+        rows=int(encoded_dataframe.shape[0]),
+        columns=int(encoded_dataframe.shape[1]),
+        extra={"parent_version": "v1"},
+    )
     LOGGER.info("Created dataset version v3.")
     return encoded_dataframe
 
