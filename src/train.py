@@ -103,20 +103,33 @@ class CleanFeatureEngineer(BaseEstimator, TransformerMixin):
 
 
 @dataclass(frozen=True)
-class OverallScoreScorer:
-    """Business-objective scorer for GridSearchCV."""
+class ThresholdOptimizedScorer:
+    """Score a CV fold after tuning the decision threshold on that fold."""
 
+    metric: str
+    threshold_metric: str
+    threshold_config: dict[str, Any]
     weights: dict[str, float] | None = None
 
     def __call__(self, estimator: Any, features: pd.DataFrame, target: pd.Series) -> float:
+        positive_scores = predict_positive_class_scores(estimator, features)
+        decision_threshold, _ = optimize_decision_threshold(
+            positive_scores=positive_scores,
+            target=target,
+            metric=self.threshold_metric,
+            minimum=float(self.threshold_config["min"]),
+            maximum=float(self.threshold_config["max"]),
+            step=float(self.threshold_config["step"]),
+            overall_score_weights=self.weights,
+        )
         metrics = compute_classification_metrics(
             estimator,
             features,
             target,
-            decision_threshold=0.5,
+            decision_threshold=decision_threshold,
             overall_score_weights=self.weights,
         )
-        return float(metrics["overall_score"])
+        return float(metrics[self.metric])
 
 
 def _to_float_array(features: Any) -> np.ndarray:
@@ -124,18 +137,26 @@ def _to_float_array(features: Any) -> np.ndarray:
     return np.asarray(features, dtype=np.float64)
 
 
-def _scorer_from_name(name: str, config: dict[str, Any]) -> str | OverallScoreScorer:
+def _scorer_from_name(name: str, config: dict[str, Any]) -> str | ThresholdOptimizedScorer:
     """Return a sklearn scorer by configured metric name."""
     supported_scorers = {
-        "accuracy": "accuracy",
-        "balanced_accuracy": "balanced_accuracy",
-        "f1": "f1",
-        "precision": "precision",
-        "recall": "recall",
         "roc_auc": "roc_auc",
     }
-    if name == "overall_score":
-        return OverallScoreScorer(config["training"].get("overall_score_weights"))
+    threshold_dependent_metrics = {
+        "accuracy",
+        "balanced_accuracy",
+        "f1",
+        "precision",
+        "recall",
+        "overall_score",
+    }
+    if name in threshold_dependent_metrics:
+        return ThresholdOptimizedScorer(
+            metric=name,
+            threshold_metric=config["training"].get("decision_threshold_metric", name),
+            threshold_config=config["training"]["decision_threshold_search"],
+            weights=config["training"].get("overall_score_weights"),
+        )
     if name in supported_scorers:
         return supported_scorers[name]
     raise ValueError(f"Unsupported GridSearchCV scoring metric: {name}")

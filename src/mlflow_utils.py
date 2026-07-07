@@ -81,6 +81,8 @@ def _model_metadata(config: dict[str, Any], result: ModelResult) -> dict[str, An
         "test_metrics": _scalar_metrics(result.test_metrics),
         "input_columns": list(result.input_example.columns),
         "input_schema": _input_schema_from_example(result),
+        "api_input_schema": config.get("api", {}).get("input_schema"),
+        "api_max_batch_size": config.get("api", {}).get("max_batch_size"),
         "target_column": config["schema"]["target_column"],
         "drop_columns": config["schema"]["drop_columns"],
         "preprocessing_metadata": _read_json_if_exists(

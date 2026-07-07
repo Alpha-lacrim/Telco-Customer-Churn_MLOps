@@ -22,6 +22,104 @@ data_versioning:
   checksum_algorithm: sha256
   remote_uri: ""
 
+api:
+  max_batch_size: 1000
+  input_schema:
+    fields:
+      - name: Gender
+        type: categorical
+        required: true
+        allowed_values: [Female, Male]
+      - name: Senior Citizen
+        type: categorical
+        required: true
+        allowed_values: ["No", "Yes"]
+      - name: Partner
+        type: categorical
+        required: true
+        allowed_values: ["No", "Yes"]
+      - name: Dependents
+        type: categorical
+        required: true
+        allowed_values: ["No", "Yes"]
+      - name: Tenure Months
+        type: integer
+        required: true
+        min: 0
+        max: 120
+      - name: Phone Service
+        type: categorical
+        required: true
+        allowed_values: ["No", "Yes"]
+      - name: Multiple Lines
+        type: categorical
+        required: true
+        allowed_values: ["No", "No phone service", "Yes"]
+      - name: Internet Service
+        type: categorical
+        required: true
+        allowed_values: ["DSL", "Fiber optic", "No"]
+      - name: Online Security
+        type: categorical
+        required: true
+        allowed_values: ["No", "No internet service", "Yes"]
+      - name: Online Backup
+        type: categorical
+        required: true
+        allowed_values: ["No", "No internet service", "Yes"]
+      - name: Device Protection
+        type: categorical
+        required: true
+        allowed_values: ["No", "No internet service", "Yes"]
+      - name: Tech Support
+        type: categorical
+        required: true
+        allowed_values: ["No", "No internet service", "Yes"]
+      - name: Streaming TV
+        type: categorical
+        required: true
+        allowed_values: ["No", "No internet service", "Yes"]
+      - name: Streaming Movies
+        type: categorical
+        required: true
+        allowed_values: ["No", "No internet service", "Yes"]
+      - name: Contract
+        type: categorical
+        required: true
+        allowed_values: [Month-to-month, One year, Two year]
+      - name: Paperless Billing
+        type: categorical
+        required: true
+        allowed_values: ["No", "Yes"]
+      - name: Payment Method
+        type: categorical
+        required: true
+        allowed_values:
+          - Bank transfer (automatic)
+          - Credit card (automatic)
+          - Electronic check
+          - Mailed check
+      - name: Monthly Charges
+        type: number
+        required: true
+        min: 0.0
+        max: 1000.0
+      - name: Total Charges
+        type: number
+        required: true
+        min: 0.0
+        max: 100000.0
+      - name: Latitude
+        type: number
+        required: true
+        min: -90.0
+        max: 90.0
+      - name: Longitude
+        type: number
+        required: true
+        min: -180.0
+        max: 180.0
+
 schema:
   target_column: Churn Value
   source_columns:

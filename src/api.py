@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -24,103 +25,12 @@ app = FastAPI(title="Telco Customer Churn API", version="1.0.0")
 MODEL_METADATA_FILENAME = "model_metadata.json"
 
 
-YesNo = Literal["No", "Yes"]
-
-
-class TelcoCustomerRecord(BaseModel):
-    """Validated inference payload using IBM Telco column aliases."""
-
-    model_config = ConfigDict(
-        extra="forbid",
-        populate_by_name=True,
-        str_strip_whitespace=True,
-    )
-
-    gender: Literal["Female", "Male"] = Field(..., alias="Gender")
-    senior_citizen: YesNo = Field(..., alias="Senior Citizen")
-    partner: YesNo = Field(..., alias="Partner")
-    dependents: YesNo = Field(..., alias="Dependents")
-    tenure_months: int = Field(..., alias="Tenure Months", ge=0, le=120)
-    phone_service: YesNo = Field(..., alias="Phone Service")
-    multiple_lines: Literal["No", "No phone service", "Yes"] = Field(
-        ...,
-        alias="Multiple Lines",
-    )
-    internet_service: Literal["DSL", "Fiber optic", "No"] = Field(
-        ...,
-        alias="Internet Service",
-    )
-    online_security: Literal["No", "No internet service", "Yes"] = Field(
-        ...,
-        alias="Online Security",
-    )
-    online_backup: Literal["No", "No internet service", "Yes"] = Field(
-        ...,
-        alias="Online Backup",
-    )
-    device_protection: Literal["No", "No internet service", "Yes"] = Field(
-        ...,
-        alias="Device Protection",
-    )
-    tech_support: Literal["No", "No internet service", "Yes"] = Field(
-        ...,
-        alias="Tech Support",
-    )
-    streaming_tv: Literal["No", "No internet service", "Yes"] = Field(
-        ...,
-        alias="Streaming TV",
-    )
-    streaming_movies: Literal["No", "No internet service", "Yes"] = Field(
-        ...,
-        alias="Streaming Movies",
-    )
-    contract: Literal["Month-to-month", "One year", "Two year"] = Field(
-        ...,
-        alias="Contract",
-    )
-    paperless_billing: YesNo = Field(..., alias="Paperless Billing")
-    payment_method: Literal[
-        "Bank transfer (automatic)",
-        "Credit card (automatic)",
-        "Electronic check",
-        "Mailed check",
-    ] = Field(..., alias="Payment Method")
-    monthly_charges: float = Field(
-        ...,
-        alias="Monthly Charges",
-        ge=0.0,
-        le=1000.0,
-        allow_inf_nan=False,
-    )
-    total_charges: float = Field(
-        ...,
-        alias="Total Charges",
-        ge=0.0,
-        le=100000.0,
-        allow_inf_nan=False,
-    )
-    latitude: float = Field(
-        ...,
-        alias="Latitude",
-        ge=-90.0,
-        le=90.0,
-        allow_inf_nan=False,
-    )
-    longitude: float = Field(
-        ...,
-        alias="Longitude",
-        ge=-180.0,
-        le=180.0,
-        allow_inf_nan=False,
-    )
-
-
 class PredictionRequest(BaseModel):
     """Batch prediction request."""
 
     model_config = ConfigDict(extra="forbid")
 
-    records: list[TelcoCustomerRecord] = Field(..., min_length=1, max_length=1000)
+    records: list[dict[str, Any]] = Field(..., min_length=1)
 
 
 class PredictionItem(BaseModel):
@@ -141,6 +51,8 @@ class PredictionResponse(BaseModel):
 class HealthResponse(BaseModel):
     """Health check response."""
 
+    model_config = ConfigDict(protected_namespaces=())
+
     status: Literal["ok"]
     model_uri: str
 
@@ -157,6 +69,152 @@ def _decision_threshold(model_metadata: dict[str, Any]) -> float:
 
     LOGGER.warning("Model metadata has no decision_threshold; falling back to 0.5.")
     return 0.5
+
+
+def _input_validation_schema(
+    config: dict[str, Any],
+    model_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Prefer model-bundled schema, falling back to config."""
+    schema = model_metadata.get("api_input_schema") or config.get("api", {}).get("input_schema")
+    if not schema or "fields" not in schema:
+        raise RuntimeError("API input schema is missing from model metadata and config.")
+
+    input_columns = model_metadata.get("input_columns")
+    if not input_columns:
+        return schema
+
+    fields_by_name = {field["name"]: field for field in schema["fields"]}
+    ordered_fields = []
+    missing_fields = []
+    for column in input_columns:
+        field = fields_by_name.get(column)
+        if field is None:
+            missing_fields.append(column)
+        else:
+            ordered_fields.append(field)
+    if missing_fields:
+        raise RuntimeError(
+            "Model input columns are missing from API input schema: "
+            + ", ".join(missing_fields)
+        )
+    return {"fields": ordered_fields}
+
+
+def _max_batch_size(config: dict[str, Any], model_metadata: dict[str, Any]) -> int:
+    """Load max request batch size from model metadata or config."""
+    return int(
+        model_metadata.get(
+            "api_max_batch_size",
+            config.get("api", {}).get("max_batch_size", 1000),
+        )
+    )
+
+
+def _validation_error(index: int, field_name: str, message: str) -> dict[str, Any]:
+    """Format a FastAPI-style validation error."""
+    return {
+        "loc": ["body", "records", index, field_name],
+        "msg": message,
+        "type": "value_error",
+    }
+
+
+def _validate_numeric_value(
+    value: Any,
+    field: dict[str, Any],
+    index: int,
+) -> tuple[float | int | None, dict[str, Any] | None]:
+    """Validate and coerce numeric API input."""
+    field_name = field["name"]
+    field_type = field["type"]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None, _validation_error(index, field_name, "Input should be numeric.")
+
+    numeric_value = float(value)
+    if not math.isfinite(numeric_value):
+        return None, _validation_error(index, field_name, "Input should be finite.")
+    if "min" in field and numeric_value < float(field["min"]):
+        return None, _validation_error(index, field_name, f"Input should be >= {field['min']}.")
+    if "max" in field and numeric_value > float(field["max"]):
+        return None, _validation_error(index, field_name, f"Input should be <= {field['max']}.")
+    if field_type == "integer":
+        if not numeric_value.is_integer():
+            return None, _validation_error(index, field_name, "Input should be an integer.")
+        return int(numeric_value), None
+    return numeric_value, None
+
+
+def _validate_prediction_records(
+    records: list[dict[str, Any]],
+    schema: dict[str, Any],
+    max_batch_size: int,
+) -> list[dict[str, Any]]:
+    """Validate records against the configured or model-bundled API schema."""
+    if len(records) > max_batch_size:
+        raise HTTPException(
+            status_code=422,
+            detail=[
+                {
+                    "loc": ["body", "records"],
+                    "msg": f"Batch size must be <= {max_batch_size}.",
+                    "type": "value_error",
+                }
+            ],
+        )
+
+    fields = schema["fields"]
+    field_names = [field["name"] for field in fields]
+    allowed_field_names = set(field_names)
+    errors = []
+    validated_records: list[dict[str, Any]] = []
+
+    for index, record in enumerate(records):
+        extra_fields = sorted(set(record) - allowed_field_names)
+        for field_name in extra_fields:
+            errors.append(_validation_error(index, field_name, "Extra field is not permitted."))
+
+        validated_record: dict[str, Any] = {}
+        for field in fields:
+            field_name = field["name"]
+            if field.get("required", True) and field_name not in record:
+                errors.append(_validation_error(index, field_name, "Field required."))
+                continue
+            if field_name not in record:
+                continue
+
+            value = record[field_name]
+            field_type = field["type"]
+            if field_type == "categorical":
+                if not isinstance(value, str):
+                    errors.append(_validation_error(index, field_name, "Input should be a string."))
+                    continue
+                normalized_value = value.strip()
+                allowed_values = {str(value) for value in field.get("allowed_values", [])}
+                if normalized_value not in allowed_values:
+                    errors.append(
+                        _validation_error(
+                            index,
+                            field_name,
+                            f"Input should be one of: {sorted(allowed_values)}.",
+                        )
+                    )
+                    continue
+                validated_record[field_name] = normalized_value
+            elif field_type in {"integer", "number"}:
+                numeric_value, error = _validate_numeric_value(value, field, index)
+                if error is not None:
+                    errors.append(error)
+                    continue
+                validated_record[field_name] = numeric_value
+            else:
+                errors.append(_validation_error(index, field_name, f"Unsupported field type: {field_type}."))
+
+        validated_records.append(validated_record)
+
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+    return validated_records
 
 
 def _resolved_model_uri(model_uri: str) -> str:
@@ -222,6 +280,8 @@ def _runtime_resources() -> dict[str, Any]:
     model_uri = os.getenv("MODEL_URI", config["deployment"]["model_uri"])
     model_uri = _resolved_model_uri(model_uri)
     model_metadata = _load_model_metadata(model_uri)
+    input_schema = _input_validation_schema(config, model_metadata)
+    max_batch_size = _max_batch_size(config, model_metadata)
     decision_threshold = _decision_threshold(model_metadata)
 
     model = mlflow.sklearn.load_model(model_uri)
@@ -231,6 +291,8 @@ def _runtime_resources() -> dict[str, Any]:
         "model": model,
         "model_uri": model_uri,
         "model_metadata": model_metadata,
+        "input_schema": input_schema,
+        "max_batch_size": max_batch_size,
         "decision_threshold": decision_threshold,
     }
 
@@ -246,9 +308,12 @@ def health() -> HealthResponse:
 def predict(request: PredictionRequest) -> PredictionResponse:
     """Predict churn probabilities and classes for one or more customers."""
     resources = _runtime_resources()
-    features = pd.DataFrame.from_records(
-        [record.model_dump(by_alias=True) for record in request.records]
+    records = _validate_prediction_records(
+        request.records,
+        resources["input_schema"],
+        resources["max_batch_size"],
     )
+    features = pd.DataFrame.from_records(records)
     model = resources["model"]
 
     if not hasattr(model, "predict_proba"):
